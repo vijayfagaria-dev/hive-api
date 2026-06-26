@@ -10,6 +10,7 @@ def notification_out(notification) -> dict:
         "title": notification.title,
         "body": notification.body,
         "fineId": notification.fine_id,
+        "proposalId": notification.proposal_id,
         "read": bool(notification.read),
         "ts": notification.ts,
     }

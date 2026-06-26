@@ -18,10 +18,12 @@ async def get(session: AsyncSession, rule_id) -> Optional[Rule]:
 
 
 async def list_all(session: AsyncSession) -> list[Rule]:
-    """All rules, grouped-friendly (category then favorites) — for the web menu."""
+    """All active rules, grouped-friendly (category then favorites) — for the web menu."""
     return list(
         await session.scalars(
-            select(Rule).order_by(Rule.category, Rule.is_favorite.desc(), Rule.id)
+            select(Rule)
+            .where(Rule.is_active.is_(True))
+            .order_by(Rule.category, Rule.is_favorite.desc(), Rule.id)
         )
     )
 
@@ -30,6 +32,7 @@ async def list_favorites(session: AsyncSession, limit: int = 10) -> list[Rule]:
     return list(
         await session.scalars(
             select(Rule)
+            .where(Rule.is_active.is_(True))
             .order_by(Rule.is_favorite.desc(), Rule.use_count.desc(), Rule.id)
             .limit(limit)
         )
@@ -40,7 +43,7 @@ async def list_by_category(session: AsyncSession, category: str) -> list[Rule]:
     return list(
         await session.scalars(
             select(Rule)
-            .where(Rule.category == category)
+            .where(Rule.category == category, Rule.is_active.is_(True))
             .order_by(Rule.use_count.desc(), Rule.id)
         )
     )

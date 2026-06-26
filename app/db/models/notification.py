@@ -19,7 +19,8 @@ class Notification(Base):
     kind: Mapped[str] = mapped_column(String, nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False)
     body: Mapped[Optional[str]] = mapped_column(String)
-    fine_id: Mapped[Optional[int]] = mapped_column(ForeignKey("fines.id"))  # deep-link target
+    fine_id: Mapped[Optional[int]] = mapped_column(ForeignKey("fines.id"))            # deep-link target
+    proposal_id: Mapped[Optional[int]] = mapped_column(ForeignKey("rule_proposals.id"))  # deep-link target
     read: Mapped[bool] = mapped_column(Boolean(create_constraint=False), nullable=False, default=False)
     ts: Mapped[str] = mapped_column(String, nullable=False, default=now_iso)
 

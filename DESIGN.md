@@ -142,6 +142,18 @@ notifications (id, member_id, kind, title, body, fine_id, read, ts)  -- in-app b
 complaint_drafts (id, reporter_id, source, ref, content_type, caption, ts)  -- legacy bot staging (unused in v4)
 push_subscriptions (id, member_id, endpoint, p256dh, auth, ts)  -- v4 Web Push (VAPID)
 
+-- v5 rule proposals (community vote to change the rule book)
+rule_proposals (id, proposer_id, type, status, target_rule_id, title, body,
+  proposed_category, proposed_text, proposed_amount, voting_opens_at, voting_closes_at,
+  frozen, resolved_at, resolution_detail, merged_rule_id, merged_rule_version_id,
+  created_at, updated_at, version)            -- version = optimistic lock
+proposal_votes (id, proposal_id, voter_id, choice, ts)   -- UNIQUE(proposal_id, voter_id)
+proposal_comments (id, proposal_id, author_id, parent_id, body, edited_at, deleted, created_at)
+proposal_events (id, proposal_id, type, actor_id, detail, ts)   -- append-only timeline
+rule_versions (id, rule_id, version_number, <rule snapshot>, active, created_by,
+  approved_by, proposal_id, created_at)       -- immutable rule history; rollback = new version
+rules (… , is_active)                          -- v5: a deleted rule is deactivated, never row-deleted
+
 bills (id, type, total, month, paid_by, ts)   -- type: rent|house_help|electricity|water
 
 bill_shares (id, bill_id, member_id, share_amount, paid)   -- POINT-IN-TIME SNAPSHOT
@@ -255,6 +267,35 @@ and runs this state machine (`app/fines.py` is the single home for it):
 > the free, cross-platform stack above. `notify.py` is channel-pluggable; the
 > official **WhatsApp Cloud API** is wired as one channel (template messages; the
 > free dev tier fits a small flat — set `WHATSAPP_*`), beside in-app/Web Push/email.
+
+## Rule proposals (v5 — community vote to change the rule book)
+
+The rule book isn't edited by fiat — it's amended by a vote. Anyone can propose a
+**new / modify / delete** rule; it runs a configurable voting period; if it passes,
+it's auto-merged into `rules`.
+
+```
+   draft ─submit─► (pending_review ─admin approve─►) voting ─close─► passed | rejected | expired
+                                                                         └ passed ⇒ merged into rules + an
+                                                                            immutable rule_versions snapshot
+```
+
+- **Who votes:** active **tenants**, one vote each (yes/no/abstain), changeable until
+  the deadline (`proposal_votes` UNIQUE(proposal_id, voter_id) + an optimistic-lock
+  `version` on the proposal). Guests can propose + comment but not vote.
+- **Passing conditions (config):** at close → `participation ≥ PROPOSAL_QUORUM` AND
+  `yes-share ≥ PROPOSAL_PASS_PCT` AND `yes ≥ PROPOSAL_MIN_YES`, else rejected
+  (or expired with no quorum). `PROPOSAL_REQUIRE_REVIEW` optionally gates voting
+  behind an admin approval.
+- **Merge + versioning:** a passed proposal creates/updates/deactivates the rule and
+  appends a `rule_versions` row (rules are never silently overwritten; rollback =
+  appending a new version from an old snapshot). "Delete" deactivates (`rules.is_active`)
+  so fines that reference the rule keep their FK + history.
+- **Reuses the existing patterns:** layered repo/service/schema/route, the
+  `proposal_events` timeline (like `fine_events`), the in-app+push+email+WhatsApp
+  notifier, the background **sweep** (closes elapsed votes alongside complaints), and
+  session-cookie auth (admin = tenant). Comments are flat + soft-delete + edit;
+  nesting/reactions/mentions and a normalized RuleCategory are a deliberate phase 2.
 
 ## The delight layer 😄
 

@@ -59,6 +59,13 @@ repo + service + schema + route; nothing else changes.
 > (VAPID) + email + WhatsApp (Meta Cloud API, template msgs)** (`app/notify.py`) —
 > channel-pluggable; each is best-effort and skipped when unconfigured. No more aiogram/webhook.
 
+> **v5 — rule proposals.** The rule book is amended by a community vote, not by fiat:
+> propose (new/modify/delete) → tenants vote → configurable quorum+majority → auto-merge
+> into `rules` with an immutable `rule_versions` history (rollback supported). Lives in
+> `services/proposals.py` + `repositories/proposals.py` + `api/routes/proposals.py` +
+> `routes/rulebook.py`; the background sweep closes elapsed votes. `rules.is_active`
+> soft-deletes (deleted rules stay for FK/history). Config: `PROPOSAL_*` in `.env`.
+
 ## Conventions
 
 - One app, one SQLite file. **Models** in `app/db/models/` are the schema; keep

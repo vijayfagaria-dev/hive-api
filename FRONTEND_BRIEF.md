@@ -448,5 +448,45 @@ Make it feel like a Gen-Z social app, not enterprise software. Direction (own th
 - It looks and feels like something a 23-year-old would actually want to open. 🐝
 
 > Reminder: when in doubt, **read `../hive-api`** (`app/api/routes`, `app/schemas`,
-> `app/domain/enums.py`, `app/services/complaints.py`) and match the code exactly.
-</content>
+> `app/domain/enums.py`, `app/services/complaints.py`, `app/services/proposals.py`) and match the code exactly.
+
+---
+
+## Appendix — Rule Proposals (v5)
+
+The rule book is amended by a **community vote**. Anyone proposes a new/modify/delete
+rule; **tenants** vote (one each, yes/no/abstain, changeable until the deadline); at
+close, configurable quorum+majority decide pass/reject; a passed proposal auto-merges
+into the rule book with immutable version history.
+
+**Enums:** `type` = `new_rule|modify_rule|delete_rule`; `status` = `draft|pending_review|
+voting|passed|rejected|expired|cancelled`; `phase` (render off this) = `draft|review|
+voting|passed|rejected|cancelled`; vote `choice` = `yes|no|abstain`.
+
+**API (all under `/api`, session-cookie auth):**
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/proposals` | `{type, title, body?, targetRuleId?, proposedCategory?, proposedText?, proposedAmount?, submit?}` → `{proposalId}` |
+| GET | `/proposals?status=` | list (summaries + tally) |
+| GET | `/proposals/{id}` | full detail: proposal + `proposer` + `vote{yes,no,abstain,eligible,myVote}` + `comments[]` + `timeline[]` + `canVote/canEdit/canAdmin` |
+| PATCH | `/proposals/{id}` | edit a draft; send `expectedVersion` (optimistic lock → 409 on stale) |
+| POST | `/proposals/{id}/submit` | draft → voting (or pending_review) |
+| POST | `/proposals/{id}/vote` | `{vote}` (tenants only; 403 for guests; 400 after deadline) |
+| GET | `/proposals/{id}/votes` · `/timeline` | tally + voters · event log |
+| GET/POST | `/proposals/{id}/comments` | list / add `{body, parentId?}` |
+| PATCH/DELETE | `/proposals/{id}/comments/{cid}` | edit (author) / soft-delete (author or admin) |
+| POST | `/proposals/{id}/cancel` | proposer or admin |
+| POST | `/proposals/{id}/{approve\|reject\|extend\|freeze\|force-merge}` | **admin (tenant)**; `extend{hours}`, `freeze{frozen}` |
+| GET | `/rulebook` | active rules (the official book) |
+| GET | `/rulebook/{ruleId}/versions` | immutable version history |
+| POST | `/rulebook/{ruleId}/rollback/{versionId}` | **admin**; restore a prior version |
+
+**Screens to build:** a **Proposals** tab (list with phase chips + live vote bars +
+countdown), a **proposal detail** (rationale, vote Yes/No/Abstain gated by `canVote`,
+tally + countdown, timeline, comments), a **"Propose a rule"** composer (type picker +
+rule fields + rationale), a **Rule Book** view with per-rule **version history + rollback**
+(admin), and admin controls on the detail when `canAdmin`. New notification kinds:
+`proposal_voting`, `proposal_comment`, `proposal_resolved`, `rule_published`, `proposal_review`
+(each carries `proposalId` → deep-link to `/proposals/{id}`).
+
+> Interactive API docs are auto-served by FastAPI at `/docs` (Swagger) and `/openapi.json`.
