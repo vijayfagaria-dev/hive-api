@@ -54,6 +54,59 @@ class EventType(StrEnum):
     PAID = "paid"
 
 
+# --- Rule proposals ---------------------------------------------------------
+
+class ProposalStatus(StrEnum):
+    DRAFT = "draft"                  # being written by the proposer
+    PENDING_REVIEW = "pending_review"  # awaiting admin approval (if review is on)
+    VOTING = "voting"               # open for votes until voting_closes_at
+    PASSED = "passed"               # met the passing conditions; merged into the rule book
+    REJECTED = "rejected"           # failed the passing conditions
+    EXPIRED = "expired"             # voting closed with no quorum
+    CANCELLED = "cancelled"         # withdrawn by proposer / killed by admin
+
+
+class ProposalType(StrEnum):
+    NEW_RULE = "new_rule"
+    MODIFY_RULE = "modify_rule"
+    DELETE_RULE = "delete_rule"
+
+
+class ProposalVoteChoice(StrEnum):
+    YES = "yes"
+    NO = "no"
+    ABSTAIN = "abstain"  # counts toward quorum, not toward the yes/no ratio
+
+
+class ProposalEventType(StrEnum):
+    CREATED = "created"
+    SUBMITTED = "submitted"
+    APPROVED = "approved"
+    VOTING_OPENED = "voting_opened"
+    VOTE_CAST = "vote_cast"
+    COMMENTED = "commented"
+    EXTENDED = "extended"
+    FROZEN = "frozen"
+    VOTING_CLOSED = "voting_closed"
+    PASSED = "passed"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+    CANCELLED = "cancelled"
+    MERGED = "merged"
+
+
+# Persisted proposal status -> the phase the frontend renders.
+PROPOSAL_PHASE: dict[str, str] = {
+    ProposalStatus.DRAFT: "draft",
+    ProposalStatus.PENDING_REVIEW: "review",
+    ProposalStatus.VOTING: "voting",
+    ProposalStatus.PASSED: "passed",
+    ProposalStatus.REJECTED: "rejected",
+    ProposalStatus.EXPIRED: "rejected",
+    ProposalStatus.CANCELLED: "cancelled",
+}
+
+
 # Statuses that count as money owed / in the pot.
 OWED_STATUSES: tuple[str, ...] = (FineStatus.CONFIRMED, FineStatus.UPHELD)
 

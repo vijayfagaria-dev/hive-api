@@ -19,6 +19,9 @@ class Rule(Base):
     use_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     severity_tier: Mapped[str] = mapped_column(String, nullable=False, default="low")
     auto_confirm: Mapped[bool] = mapped_column(Boolean(create_constraint=False), nullable=False, default=True)
+    # A "deleted" rule (via a passed delete_rule proposal) is deactivated, never
+    # row-deleted, so existing fines that reference it keep their FK + history.
+    is_active: Mapped[bool] = mapped_column(Boolean(create_constraint=False), nullable=False, default=True)
 
     __table_args__ = (
         CheckConstraint("fine_amount >= 0", name="fine_amount_non_negative"),

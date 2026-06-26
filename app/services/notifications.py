@@ -34,10 +34,14 @@ def rupees(n: int) -> str:
     return f"₹{n:,}"
 
 
-def _complaint_url(fine_id: Optional[int]) -> Optional[str]:
-    if fine_id is None or not settings.app_base_url:
+def _link_url(fine_id: Optional[int] = None, proposal_id: Optional[int] = None) -> Optional[str]:
+    if not settings.app_base_url:
         return None
-    return f"{settings.app_base_url}/complaints/{fine_id}"
+    if fine_id is not None:
+        return f"{settings.app_base_url}/complaints/{fine_id}"
+    if proposal_id is not None:
+        return f"{settings.app_base_url}/proposals/{proposal_id}"
+    return None
 
 
 # --- Core fan-out ----------------------------------------------------------
@@ -50,13 +54,16 @@ async def notify_member(
     title: str,
     body: Optional[str] = None,
     fine_id: Optional[int] = None,
+    proposal_id: Optional[int] = None,
 ) -> None:
     """Record an in-app notification, then push + email + WhatsApp best-effort."""
     await notifications_repo.insert(
-        session, member_id=member.id, kind=kind, title=title, body=body, fine_id=fine_id
+        session, member_id=member.id, kind=kind, title=title, body=body,
+        fine_id=fine_id, proposal_id=proposal_id,
     )
-    url = _complaint_url(fine_id)
-    await _push_web(session, member, title=title, body=body, url=url, fine_id=fine_id)
+    url = _link_url(fine_id=fine_id, proposal_id=proposal_id)
+    tag_id = f"complaint-{fine_id}" if fine_id else (f"proposal-{proposal_id}" if proposal_id else None)
+    await _push_web(session, member, title=title, body=body, url=url, tag_id=tag_id)
     await _send_email(member, subject=title, body=body, url=url)
     await _send_whatsapp(member, title=title, body=body, url=url)
 
@@ -69,22 +76,25 @@ async def notify_members(
     title: str,
     body: Optional[str] = None,
     fine_id: Optional[int] = None,
+    proposal_id: Optional[int] = None,
 ) -> None:
     for member in members:
-        await notify_member(session, member, kind=kind, title=title, body=body, fine_id=fine_id)
+        await notify_member(
+            session, member, kind=kind, title=title, body=body,
+            fine_id=fine_id, proposal_id=proposal_id,
+        )
 
 
 # --- Web Push channel ------------------------------------------------------
 
-async def _push_web(session, member: Member, *, title, body, url, fine_id) -> None:
+async def _push_web(session, member: Member, *, title, body, url, tag_id=None) -> None:
     if not settings.push_enabled:
         return
     subs = await push_repo.list_for(session, member.id)
     if not subs:
         return
     payload = json.dumps(
-        {"title": title, "body": body or "", "url": url,
-         "tag": f"complaint-{fine_id}" if fine_id else "hive"}
+        {"title": title, "body": body or "", "url": url, "tag": tag_id or "hive"}
     )
     for sub in subs:
         try:
@@ -233,3 +243,39 @@ async def complaint_resolved(
     kind: str = "complaint_resolved",
 ) -> None:
     await notify_members(session, recipients, kind=kind, title=title, body=body, fine_id=fine_id)
+
+
+# --- Rule-proposal events --------------------------------------------------
+
+async def proposal_voting_opened(
+    session: AsyncSession, *, voters: Sequence[Member], proposal_id: int, title: str
+) -> None:
+    await notify_members(
+        session, voters, kind="proposal_voting", proposal_id=proposal_id,
+        title="🗳️ New rule proposal — your vote's needed",
+        body=f"“{title}” is open for a vote. Open the app to vote Yes / No.",
+    )
+
+
+async def proposal_commented(
+    session: AsyncSession, *, recipients: Sequence[Member], proposal_id: int, by: str, title: str
+) -> None:
+    await notify_members(
+        session, recipients, kind="proposal_comment", proposal_id=proposal_id,
+        title="💬 New comment on a proposal",
+        body=f"{by} commented on “{title}”.",
+    )
+
+
+async def proposal_resolved(
+    session: AsyncSession,
+    *,
+    recipients: Sequence[Member],
+    proposal_id: int,
+    title: str,
+    body: Optional[str] = None,
+    kind: str = "proposal_resolved",
+) -> None:
+    await notify_members(
+        session, recipients, kind=kind, proposal_id=proposal_id, title=title, body=body
+    )

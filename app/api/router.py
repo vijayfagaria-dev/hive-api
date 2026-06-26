@@ -15,6 +15,8 @@ from app.api.routes import (
     home,
     notifications,
     payments,
+    proposals,
+    rulebook,
 )
 
 api_router = APIRouter(prefix="/api")
@@ -27,3 +29,5 @@ api_router.include_router(bills.router)
 api_router.include_router(payments.router)
 api_router.include_router(notifications.router)
 api_router.include_router(account.router)
+api_router.include_router(proposals.router)
+api_router.include_router(rulebook.router)

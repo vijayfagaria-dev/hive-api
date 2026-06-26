@@ -64,6 +64,22 @@ class Settings:
     whatsapp_lang: str = os.getenv("WHATSAPP_TEMPLATE_LANG", "en").strip()
     whatsapp_api_version: str = os.getenv("WHATSAPP_API_VERSION", "v21.0").strip()
 
+    # --- Rule proposals (community vote to change the rule book) ---
+    # Voting window for a submitted proposal.
+    proposal_voting_hours: int = _int("PROPOSAL_VOTING_HOURS", 72)
+    # Passing conditions (evaluated at close): need >= quorum tenant participants,
+    # yes-share >= pass_pct, and yes >= min_yes — all configurable.
+    proposal_quorum: int = _int("PROPOSAL_QUORUM", 2)
+    proposal_pass_pct: int = _int("PROPOSAL_PASS_PCT", 60)
+    proposal_min_yes: int = _int("PROPOSAL_MIN_YES", 2)
+    # If true, a proposal needs an admin (tenant) to approve it before voting opens;
+    # if false, submitting opens voting immediately.
+    proposal_require_review: bool = os.getenv("PROPOSAL_REQUIRE_REVIEW", "").strip().lower() in ("1", "true", "yes")
+    # Anti-spam: max proposals one member can submit per rolling 24h, and a minimum
+    # body length so proposals are substantive.
+    proposal_max_per_day: int = _int("PROPOSAL_MAX_PER_DAY", 5)
+    proposal_min_body_len: int = _int("PROPOSAL_MIN_BODY_LEN", 10)
+
     # --- Complaint workflow (proof + accept/deny + voting) ---
     vote_window_hours: int = _int("VOTE_WINDOW_HOURS", 24)
     proof_storage_dir: str = os.getenv("PROOF_STORAGE_DIR", "proofs").strip()
