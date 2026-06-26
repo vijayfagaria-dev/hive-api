@@ -4,8 +4,7 @@
     python -m app.admin promote <username>     # guest -> tenant
     python -m app.admin demote  <username>     # tenant -> guest
 
-This is the manual "make them a tenant" step — there is no self-service path to
-the tenant role (BR-A03).
+The manual "make them a tenant" step — there is no self-service path to tenant.
 """
 
 from __future__ import annotations
@@ -13,39 +12,40 @@ from __future__ import annotations
 import asyncio
 import sys
 
-from . import db as dbm
-from . import queries
+from app.db.session import create_all, dispose, session_scope
+from app.domain.enums import Role
+from app.repositories import members as members_repo
+from app.services import accounts
 
 
 async def _set_role(username: str, role: str) -> None:
-    db = await dbm.connect()
-    try:
-        member = await queries.get_member_by_username(db, username)
+    await create_all()
+    async with session_scope() as session:
+        member = await members_repo.get_by_username(session, username)
         if member is None:
             print(f"No member with username {username!r}.")
             return
-        await queries.set_role(db, member["id"], role)
-        print(f"{member['username']} (id {member['id']}) is now a {role}.")
-    finally:
-        await db.close()
+        await accounts.set_role(session, member, role)
+        print(f"{member.username} (id {member.id}) is now a {role}.")
+    await dispose()
 
 
 async def _list() -> None:
-    db = await dbm.connect()
-    try:
-        members = await queries.list_active_members(db)
+    await create_all()
+    async with session_scope() as session:
+        members = await members_repo.list_active(session)
         if not members:
             print("(no members yet)")
         for m in members:
-            login = m["username"] or "(bot-only)"
-            print(f"  {m['id']:>3}  {m['role']:<7}  {login:<16}  {m['name']}")
-    finally:
-        await db.close()
+            login = m.username or "(no login)"
+            print(f"  {m.id:>3}  {m.role:<7}  {login:<16}  {m.name}")
+    await dispose()
 
 
 def main(argv: list[str]) -> None:
     if len(argv) >= 3 and argv[1] in ("promote", "demote"):
-        asyncio.run(_set_role(argv[2], "tenant" if argv[1] == "promote" else "guest"))
+        role = Role.TENANT if argv[1] == "promote" else Role.GUEST
+        asyncio.run(_set_role(argv[2], role))
     elif len(argv) >= 2 and argv[1] == "list":
         asyncio.run(_list())
     else:
