@@ -1,0 +1,18 @@
+# Caddy — auto-HTTPS for the DuckDNS subdomain, one origin so the login cookie
+# stays same-origin. Replace the host with your DuckDNS subdomain.
+#
+# /api/* → FastAPI (single worker; serves the JSON API + proof images under /api/proofs)
+# everything else → Next.js
+# Caddy fetches + renews a free Let's Encrypt cert automatically (ports 80+443 must be open).
+
+hive-flat.duckdns.org {
+    encode zstd gzip
+
+    handle /api/* {
+        reverse_proxy 127.0.0.1:8000
+    }
+
+    handle {
+        reverse_proxy 127.0.0.1:3000
+    }
+}

@@ -21,7 +21,7 @@ os.environ["FLAT_LAT"] = "12.9716"
 os.environ["FLAT_LNG"] = "77.5946"
 os.environ["FLAT_PLACE_NAME"] = "Hive"
 
-from app.location import getting_here_links  # noqa: E402
+from app.services.location import getting_here_links  # noqa: E402
 
 
 def ns(**kw):

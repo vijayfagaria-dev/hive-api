@@ -82,11 +82,31 @@ the sole DB (pauses after 7 days idle).
 reuses Telegram identity, no login to build — *recommended*) vs a **standalone
 web page / PWA** (bookmark, but build a tiny login).
 
+## Backend architecture (layered)
+
+The backend is a layered FastAPI app over **SQLAlchemy 2.0 async ORM** + **Alembic**
+(`sqlite+aiosqlite`). Strict boundaries keep it growable:
+
+```
+api/ (routes + deps)  →  services/ (business logic)  →  repositories/ (ORM queries)  →  db/models
+   ▲ schemas/ (DTOs)         ▲ domain/ (enums, time)        core/ (config, logging, errors, security)
+```
+
+- **Routes** handle only request/response and delegate to services.
+- **Services** own the rules (complaint workflow, the bill-share snapshot, accounts,
+  reporting, notifications) and raise semantic errors mapped centrally to HTTP.
+- **Repositories** hold all ORM queries and **never commit** — the request is one
+  unit of work (`get_session`); the sweep/CLI use `session_scope`.
+- **Models** (`db/models/`) are the schema of record; **Alembic** migrations evolve
+  it (`create_all` self-provisions fresh/dev DBs). Timestamps stay TEXT ISO-8601.
+
 ## Data model
 
 ```sql
 members (
-  id, name, telegram_id,
+  id, name, telegram_id,   -- telegram_id is legacy (bot retired in v4)
+  username, password_hash, -- v2 web login
+  email,                   -- v4 optional; email notification fallback
   role,            -- 'tenant' | 'guest'
   is_active,       -- in the house right now?
   joined_on, left_on,
@@ -107,10 +127,20 @@ fines (
   status,          -- 'pending' | 'confirmed' | 'disputed' | 'void' | 'upheld'
   paid,
   confirm_deadline,
-  dispute_reason
+  dispute_reason,
+  vote_deadline,   -- v3: set when a vote opens; auto-finalizes after this
+  resolution,      -- v3: 'accepted' | 'auto_confirmed' | 'upheld' | 'void'
+  resolved_at      -- v3: terminal timestamp
 )
 
-fine_votes (id, fine_id, voter_id, vote)   -- only for disputed fines
+fine_votes (id, fine_id, voter_id, vote, ts)   -- for disputed (voting) complaints
+
+-- v3 complaint workflow (see "Complaint workflow" below)
+fine_proofs (id, fine_id, uploaded_by, source, ref, content_type, width, height, ts)
+fine_events (id, fine_id, type, actor_id, detail, ts)         -- append-only audit trail
+notifications (id, member_id, kind, title, body, fine_id, read, ts)  -- in-app backbone
+complaint_drafts (id, reporter_id, source, ref, content_type, caption, ts)  -- legacy bot staging (unused in v4)
+push_subscriptions (id, member_id, endpoint, p256dh, auth, ts)  -- v4 Web Push (VAPID)
 
 bills (id, type, total, month, paid_by, ts)   -- type: rent|house_help|electricity|water
 
@@ -182,6 +212,49 @@ person+rule within 6h; overturn rate >40% → all fines need a vote.
 among friends, a public "biggest false-reporter 🏆" stat does more than any
 algorithm. Ship Layer 1 + visible overturn stat + loser-pays first; add voting
 only if someone games it.
+
+## Complaint workflow (v3 — implemented)
+
+The fine *is* the complaint. A complaint now requires **mandatory image proof**
+and runs this state machine (`app/fines.py` is the single home for it):
+
+```
+                       accused taps Accept
+   raised ──────────────────────────────────────► REGISTERED (status=confirmed)
+  (pending)                                         resolution=accepted
+     │                                         ▲
+     │ accused/anyone taps Deny ──► vote opens │ cooling window elapses untouched
+     ▼   (status=disputed + vote_deadline)     │ (sweep) resolution=auto_confirmed
+   VOTING ──── majority Uphold ───────────────►┘ REGISTERED (status=upheld)
+     │  └───── majority Void / tie / no quorum ──► REJECTED (status=void)
+     ▼  (finalizes when all eligible vote, or vote_deadline passes)
+```
+
+- **Proof first.** `fines.create_fine` refuses without ≥1 `fine_proofs` row. Web =
+  `POST /api/complaints` multipart (≥1 image), camera-first on mobile. No proof, no
+  complaint. (A v3 Telegram photo-first flow existed but was retired with the bot in v4.)
+- **Voting only when needed.** Eligible voters = active members who are neither
+  accuser nor accused. Accept skips voting entirely; silence auto-confirms (the v1
+  cooling window, preserved). The status enum is unchanged — "voting" is
+  `status=disputed` + an open `vote_deadline`.
+- **Audit trail.** Every step appends a `fine_events` row (raised, accused_notified,
+  accepted, disputed, voting_started, members_notified, vote_cast, vote_finalized,
+  auto_confirmed, paid) → the API timeline/status tracker.
+- **Notifications** (`app/notify.py`, web-first since v4): in-app `notifications`
+  row (always, the reliable backbone) + best-effort **Web Push** (VAPID; Android +
+  installed iOS PWAs) + best-effort **email** fallback + best-effort **WhatsApp**
+  (official Meta Cloud API, template messages — `whatsapp_enabled` when a token +
+  phone-number-id are set). No Telegram. Accused is notified on raise; all eligible
+  voters on a deny; both parties on resolution. Sweeps run on `SWEEP_INTERVAL_SECONDS`.
+- **Anti-spam** (config): per-day complaint cap + same accused+rule dedupe window.
+
+> **v4 — bot retired, web-first.** Telegram penetration in India is low, so the
+> Telegram bot (input *and* push) was removed. The product is now the Next.js web
+> app over this JSON API; the bot's management actions are API endpoints
+> (`POST /api/complaints` filing, `POST /api/bills`, etc.). Notifications moved to
+> the free, cross-platform stack above. `notify.py` is channel-pluggable; the
+> official **WhatsApp Cloud API** is wired as one channel (template messages; the
+> free dev tier fits a small flat — set `WHATSAPP_*`), beside in-app/Web Push/email.
 
 ## The delight layer 😄
 

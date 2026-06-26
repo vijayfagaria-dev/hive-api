@@ -9,10 +9,15 @@ env/
 .env
 .env.local
 
-# Database (self-creates + seeds on first run)
+# Database (self-creates + seeds on first run) — incl. WAL/SHM sidecars
 *.db
+*.db-wal
+*.db-shm
 *.sqlite3
 *.sqlite
+
+# Uploaded complaint image proofs (PROOF_STORAGE_DIR)
+/proofs/
 
 # OS / editor
 .DS_Store
