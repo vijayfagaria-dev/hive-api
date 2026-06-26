@@ -32,18 +32,31 @@ Channels: in-app + Web Push (free) + Gmail email (free) + WhatsApp Cloud API dev
 
 ## Phase 3 — Server bootstrap (me → you paste)
 ```bash
-sudo apt update && sudo apt install -y python3-venv python3-pip git nodejs npm
+# (1 GB AMD micro) add swap first so installs/build don't OOM:
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+
+sudo apt update && sudo apt install -y git software-properties-common curl
+
+# Python 3.11+ (app uses StrEnum; Ubuntu 22.04 ships only 3.10):
+sudo add-apt-repository -y ppa:deadsnakes/ppa
+sudo apt update && sudo apt install -y python3.11 python3.11-venv
+
+# Node 20 (Next 16 needs >=18.18; the apt 'nodejs' on 22.04 is far too old):
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+
 # Caddy (auto-HTTPS):
-sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
+sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
 sudo apt update && sudo apt install -y caddy
+
 # App user + persistent data dir (DB + proofs survive redeploys):
 sudo useradd -r -m -d /opt/hive -s /bin/bash hive
 sudo mkdir -p /var/lib/hive/proofs && sudo chown -R hive:hive /var/lib/hive
-# (AMD micro only) add swap so the Next build doesn't OOM:
-sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
-echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+
+python3.11 --version && node --version && caddy version   # verify
 ```
 
 ## Phase 4 — Deploy both apps (me → you paste)
@@ -54,7 +67,7 @@ git clone https://github.com/vijayfagaria-dev/hive-web  /opt/hive/hive-web
 
 # Backend
 cd /opt/hive/hive-api
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt
 cp deploy/env.api.example .env       # then fill secrets (Phase 6–8)
 .venv/bin/python -m alembic upgrade head      # schema of record (not just create_all)
 
