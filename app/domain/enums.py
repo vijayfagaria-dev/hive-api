@@ -121,3 +121,35 @@ PHASE: dict[str, str] = {
     FineStatus.UPHELD: "registered",
     FineStatus.VOID: "rejected",
 }
+
+
+# --- Household user management ----------------------------------------------
+
+class Permission(StrEnum):
+    """Granular capabilities. Authorization checks reference a Permission, never a
+    role literal, so new roles (Owner, Moderator, Read-only, House Manager…) slot
+    in by editing the role→permission policy alone (app/domain/permissions.py)."""
+
+    VIEW_MEMBERS = "view_members"
+    INVITE_MEMBER = "invite_member"
+    UPDATE_ROLE = "update_role"
+    REMOVE_MEMBER = "remove_member"
+    MANAGE_USERS = "manage_users"  # umbrella; also marks a role as "admin"
+
+
+class MemberEventType(StrEnum):
+    """Append-only audit trail for household-management actions on a member."""
+
+    JOINED = "joined"                    # self-registration
+    INVITE_ACCEPTED = "invite_accepted"  # joined by redeeming an invite
+    ROLE_CHANGED = "role_changed"
+    RENAMED = "renamed"
+    REMOVED = "removed"
+    REACTIVATED = "reactivated"
+
+
+class InvitationStatus(StrEnum):
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    REVOKED = "revoked"
+    EXPIRED = "expired"

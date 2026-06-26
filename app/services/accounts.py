@@ -36,14 +36,18 @@ def _validate_email(email: str) -> str:
     return email
 
 
-async def register(
+async def _create_member(
     session: AsyncSession,
     *,
     username: str,
     password: str,
+    role: str,
+    name: Optional[str] = None,
     email: Optional[str] = None,
     whatsapp: Optional[str] = None,
 ) -> Member:
+    """Validate + create a member at the given role. Shared by self-registration
+    (guest) and invite redemption (the invited role)."""
     username = username.strip()
     if len(username) < 3:
         raise Unprocessable("Username must be at least 3 characters.")
@@ -52,8 +56,9 @@ async def register(
     if await members_repo.get_by_username(session, username) is not None:
         raise Conflict("That username is taken.")
     try:
-        member = await members_repo.register(
-            session, username=username, password_hash=hash_password(password)
+        member = await members_repo.create(
+            session, username=username, password_hash=hash_password(password),
+            role=role, name=name,
         )
     except IntegrityError:  # lower(username) unique index caught a TOCTOU race
         raise Conflict("That username is taken.")
@@ -62,6 +67,36 @@ async def register(
     if whatsapp and whatsapp.strip():
         member.whatsapp = normalize_whatsapp(whatsapp)
     return member
+
+
+async def register(
+    session: AsyncSession,
+    *,
+    username: str,
+    password: str,
+    email: Optional[str] = None,
+    whatsapp: Optional[str] = None,
+) -> Member:
+    """Self-registration always creates a guest."""
+    return await _create_member(
+        session, username=username, password=password, role=Role.GUEST,
+        email=email, whatsapp=whatsapp,
+    )
+
+
+async def register_with_role(
+    session: AsyncSession,
+    *,
+    username: str,
+    password: str,
+    role: str,
+    name: Optional[str] = None,
+    email: Optional[str] = None,
+) -> Member:
+    """Create a member at a specific role (used by invite redemption)."""
+    return await _create_member(
+        session, username=username, password=password, role=role, name=name, email=email,
+    )
 
 
 async def authenticate(session: AsyncSession, username: str, password: str) -> Member:

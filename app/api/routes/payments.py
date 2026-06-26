@@ -9,6 +9,7 @@ from app.api.deps import get_session, require_login
 from app.core.config import settings
 from app.core.errors import DomainError, NotFound
 from app.repositories import fines as fines_repo
+from app.schemas.payments import pay_out, upi_block
 from app.services import complaints
 
 router = APIRouter(tags=["payments"])
@@ -17,10 +18,16 @@ router = APIRouter(tags=["payments"])
 @router.get("/pay")
 async def pay(session: AsyncSession = Depends(get_session), member=Depends(require_login)):
     unpaid = await fines_repo.list_unpaid_owed(session, member.id)
-    return {
-        "unpaid": [{"id": r.id, "amount": r.amount, "rule": r.rule_text} for r in unpaid],
-        "walletQr": settings.wallet_upi_qr_url or None,
-    }
+    return pay_out(unpaid, member, settings)
+
+
+@router.get("/pay/upi")
+async def pay_upi(amount: float | None = None, member=Depends(require_login)):
+    """UPI pay block for an arbitrary amount (e.g. top up the pot, or pay nothing-owed)."""
+    block = upi_block(settings, amount, f"Hive pot - {member.name}")
+    if not block["configured"]:
+        raise DomainError("UPI isn't set up yet — ask the flat lead to set UPI_VPA.")
+    return block
 
 
 @router.post("/pay/{fine_id}")

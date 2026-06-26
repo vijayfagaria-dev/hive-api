@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Iterable, Optional
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +42,26 @@ async def list_active_tenants(session: AsyncSession) -> list[Member]:
     )
 
 
+async def list_all(session: AsyncSession, *, include_inactive: bool = False) -> list[Member]:
+    """The household roster. Active-first, then by name; pass include_inactive to
+    surface members who have left (for the admin management view)."""
+    stmt = select(Member)
+    if not include_inactive:
+        stmt = stmt.where(Member.is_active.is_(True))
+    return list(await session.scalars(stmt.order_by(Member.is_active.desc(), Member.name)))
+
+
+async def count_active_with_roles(session: AsyncSession, roles: Iterable[str]) -> int:
+    """How many active members hold any of these roles (used for the last-admin guard)."""
+    return (
+        await session.scalar(
+            select(func.count())
+            .select_from(Member)
+            .where(Member.is_active.is_(True), Member.role.in_(list(roles)))
+        )
+    ) or 0
+
+
 async def eligible_voters(
     session: AsyncSession, accuser_id: int, accused_id: int
 ) -> list[Member]:
@@ -65,6 +85,18 @@ async def add(session: AsyncSession, *, name: str, role: str = Role.TENANT) -> M
 async def register(session: AsyncSession, *, username: str, password_hash: str) -> Member:
     """Self-registration: an active guest whose username doubles as the name."""
     member = Member(name=username, username=username, password_hash=password_hash, role=Role.GUEST)
+    session.add(member)
+    await session.flush()
+    return member
+
+
+async def create(
+    session: AsyncSession, *, username: str, password_hash: str, role: str, name: Optional[str] = None
+) -> Member:
+    """Create a member with an explicit role + display name (self-register or invite redeem)."""
+    member = Member(
+        name=(name or username), username=username, password_hash=password_hash, role=role
+    )
     session.add(member)
     await session.flush()
     return member

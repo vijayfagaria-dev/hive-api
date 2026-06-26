@@ -13,6 +13,8 @@ class Credentials(BaseModel):
     # Optional contact channels; used on register, ignored on login.
     email: Optional[str] = Field(default=None, max_length=254)
     whatsapp: Optional[str] = Field(default=None, max_length=24)
+    # Optional invite token; on register, redeems the invite (joins at its role).
+    invite: Optional[str] = Field(default=None, max_length=128)
 
 
 class EmailBody(BaseModel):

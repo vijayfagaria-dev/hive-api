@@ -93,6 +93,19 @@ class Settings:
     flat_lng: str = os.getenv("FLAT_LNG", "").strip()
     flat_place_name: str = os.getenv("FLAT_PLACE_NAME", "").strip()
 
+    # --- Household invitations ---
+    # How long an invite link stays valid, and a per-inviter rolling-24h cap (anti-spam).
+    invite_expiry_hours: int = _int("INVITE_EXPIRY_HOURS", 168)
+    invite_max_per_day: int = _int("INVITE_MAX_PER_DAY", 20)
+
+    # --- UPI payments (pay the pot / dues by scan or app deep-link) ---
+    # The pot's collection UPI ID (VPA), e.g. flatpot@okhdfcbank. Empty -> the pay
+    # screen shows a "not set up" state (and falls back to WALLET_UPI_QR_URL if set).
+    # We only FORMAT standard upi:// request links to this VPA; money moves
+    # bank-to-bank inside the payer's UPI app — no custody (DESIGN.md, "the jar").
+    upi_vpa: str = os.getenv("UPI_VPA", "").strip()
+    upi_payee_name: str = os.getenv("UPI_PAYEE_NAME", "Hive Pot").strip() or "Hive Pot"
+
     # --- Misc ---
     wallet_upi_qr_url: str = os.getenv("WALLET_UPI_QR_URL", "").strip()
 
@@ -123,6 +136,10 @@ class Settings:
     @property
     def whatsapp_enabled(self) -> bool:
         return bool(self.whatsapp_token and self.whatsapp_phone_id)
+
+    @property
+    def upi_enabled(self) -> bool:
+        return bool(self.upi_vpa)
 
 
 settings = Settings()
