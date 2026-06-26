@@ -17,10 +17,17 @@ from app.core import security
 from app.core.errors import Forbidden, Unauthorized
 from app.db.models import Member
 from app.db.session import get_session
-from app.domain.enums import Role
+from app.domain import permissions
+from app.domain.enums import Permission, Role
 from app.repositories import members as members_repo
 
-__all__ = ["get_session", "current_member", "require_login", "require_tenant"]
+__all__ = [
+    "get_session",
+    "current_member",
+    "require_login",
+    "require_tenant",
+    "require_permission",
+]
 
 
 async def current_member(
@@ -46,3 +53,17 @@ async def require_tenant(member: Member = Depends(require_login)) -> Member:
     if member.role != Role.TENANT:
         raise Forbidden("Tenants only.")
     return member
+
+
+def require_permission(permission: Permission):
+    """Dependency factory: require the logged-in member to hold `permission`.
+
+    Prefer this over `require_tenant` for new endpoints — it checks a capability,
+    not a role, so future roles need no route changes (see app.domain.permissions).
+    """
+
+    async def _dep(member: Member = Depends(require_login)) -> Member:
+        permissions.require(member, permission)
+        return member
+
+    return _dep

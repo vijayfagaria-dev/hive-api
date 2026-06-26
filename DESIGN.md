@@ -41,6 +41,13 @@ nails one slice and misses the rest. So: build it, own it, ₹0 to run.
   3. **Email receipts** — Gmail API on the read-only scope parses wallet emails.
   - Optional "real API" path: collect via a payment gateway (Razorpay/Cashfree)
     instead of a raw wallet — but that adds KYC/fees. Overkill for a small pot.
+- **Paying in (the outbound half).** The Pay screen builds a **UPI request** to the
+  throwaway wallet's VPA (`UPI_VPA`): a scannable QR (the generic `upi://pay?...`
+  intent, amount pre-filled) plus one-tap **Google Pay / PhonePe / Paytm** deep
+  links. This is still **no-custody** — we only *format* the request; the rupees
+  move bank-to-bank inside the payer's own UPI app, straight to the jar. Built in
+  `domain/upi.py` + `schemas/payments.py`; unset `UPI_VPA` → the screen shows a
+  "not set up" state. Confirming the money arrived is the read-only half above.
 
 ## Stack (decided)
 

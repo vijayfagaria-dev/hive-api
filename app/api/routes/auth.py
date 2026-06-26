@@ -9,7 +9,7 @@ from starlette.requests import Request
 from app.api.deps import current_member, get_session
 from app.core import security
 from app.schemas.accounts import Credentials, self_out
-from app.services import accounts
+from app.services import accounts, invitations
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -21,13 +21,19 @@ async def auth_me(member=Depends(current_member)):
 
 @router.post("/register")
 async def register(body: Credentials, request: Request, session: AsyncSession = Depends(get_session)):
-    member = await accounts.register(
-        session,
-        username=body.username,
-        password=body.password,
-        email=body.email,
-        whatsapp=body.whatsapp,
-    )
+    if body.invite:
+        # Redeem an invite: join at the invited role instead of the default guest.
+        member = await invitations.accept(
+            session, token=body.invite, username=body.username, password=body.password
+        )
+    else:
+        member = await accounts.register(
+            session,
+            username=body.username,
+            password=body.password,
+            email=body.email,
+            whatsapp=body.whatsapp,
+        )
     await session.flush()  # ensure id is assigned before we set the cookie
     security.login_session(request, member.id)
     return {"member": self_out(member)}

@@ -143,9 +143,29 @@ Base path `/api`. All bodies/responses JSON unless noted. **Errors** are always
 ### 4.4 Pay (read-only — never moves money)
 | Method | Path | Auth | Returns |
 |---|---|---|---|
-| GET | `/pay` | login | `{ unpaid: {id, amount, rule}[], walletQr: string \| null }` |
+| GET | `/pay` | login | `{ unpaid: PayFine[], total: number, upi: UpiBlock, walletQr: string \| null }` |
+| GET | `/pay/upi?amount=` | login | a `UpiBlock` for an arbitrary amount (top-up). 400 if UPI unset. |
 | POST | `/pay/{fineId}` | login (owner) | `{ paid: true, changed: boolean }` (404 if not yours) |
 | POST | `/report` | login | **deprecated → 400** (use `/complaints`). Don't call it. |
+
+```ts
+type PayFine = { id: number; amount: number; rule: string; upi: UpiBlock };
+type UpiBlock =
+  | { configured: false }
+  | { configured: true; payeeVpa: string; payeeName: string; amount: number | null;
+      currency: "INR"; note: string;
+      links: { any: string; gpay: string; phonepe: string; paytm: string } };
+```
+
+**UPI pay UX.** When `upi.configured`: render a **QR from `links.any`** (client-side QR lib —
+it's the generic `upi://pay?…` intent every UPI app scans, amount pre-filled), plus
+**"Pay with" buttons** → `links.gpay` (Google Pay), `links.phonepe`, `links.paytm`, and an
+**"Any UPI app"** button → `links.any`. Add a **copy `payeeVpa`** affordance. Pay the whole
+balance via the top-level `upi`, or one fine via that fine's `upi`. After paying, the user
+taps **"I paid"** (`POST /pay/{id}`, self-attested). When `upi.configured === false`, fall
+back to `walletQr`, else show "pay isn't set up yet."
+> Reliability note: app deep-links are Android-first; the **QR + "Any UPI app"** are the
+> universal fallback, and some apps may show the amount as editable for P2P VPAs — that's expected.
 
 ### 4.5 Bills (tenant only)
 | Method | Path | Body | Returns |

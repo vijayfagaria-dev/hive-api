@@ -279,3 +279,26 @@ async def proposal_resolved(
     await notify_members(
         session, recipients, kind=kind, proposal_id=proposal_id, title=title, body=body
     )
+
+
+# --- Household user management ----------------------------------------------
+
+async def member_role_changed(session: AsyncSession, *, member: Member, by: str, role: str) -> None:
+    await notify_member(
+        session, member, kind="member_role_changed",
+        title="🛡️ Your role changed", body=f"{by} set your role to {role}.",
+    )
+
+
+async def member_removed(session: AsyncSession, *, member: Member, by: str) -> None:
+    await notify_member(
+        session, member, kind="member_removed",
+        title="👋 Removed from the household", body=f"{by} removed you from the flat.",
+    )
+
+
+async def invite_accepted(session: AsyncSession, *, inviter: Member, who: str) -> None:
+    await notify_member(
+        session, inviter, kind="member_invite_accepted",
+        title="✅ Invite accepted", body=f"{who} joined the household.",
+    )
