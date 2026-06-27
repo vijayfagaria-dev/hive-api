@@ -19,10 +19,11 @@ async def insert(
     body: Optional[str] = None,
     fine_id: Optional[int] = None,
     proposal_id: Optional[int] = None,
+    bill_id: Optional[int] = None,
 ) -> Notification:
     notification = Notification(
         member_id=member_id, kind=kind, title=title, body=body,
-        fine_id=fine_id, proposal_id=proposal_id,
+        fine_id=fine_id, proposal_id=proposal_id, bill_id=bill_id,
     )
     session.add(notification)
     await session.flush()

@@ -25,6 +25,11 @@ class WhatsappBody(BaseModel):
     whatsapp: Optional[str] = Field(default=None, max_length=24)
 
 
+class PasswordChangeBody(BaseModel):
+    currentPassword: str = Field(min_length=1)
+    newPassword: str = Field(min_length=1, max_length=128)
+
+
 def member_out(member) -> Optional[dict]:
     """Public-safe view (no contact details) — for OTHER members in lists/detail."""
     if member is None:

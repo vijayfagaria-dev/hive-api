@@ -54,6 +54,21 @@ class EventType(StrEnum):
     PAID = "paid"
 
 
+# --- Bills (declare-and-confirm lifecycle) ----------------------------------
+
+class BillStatus(StrEnum):
+    PENDING = "pending"      # the payer declared "I paid"; awaiting the 12h sweep or a dispute
+    CONFIRMED = "confirmed"  # nobody disputed in time -> settled
+    DISPUTED = "disputed"    # a tenant disputed before the deadline; never auto-confirms
+
+
+class BillEventType(StrEnum):
+    CREATED = "created"                # the payer declared the bill
+    AUTO_CONFIRMED = "auto_confirmed"  # confirmation window elapsed, undisputed
+    DISPUTED = "disputed"
+    RESOLVED = "resolved"              # reserved: future dispute resolution / voting
+
+
 # --- Rule proposals ---------------------------------------------------------
 
 class ProposalStatus(StrEnum):

@@ -22,7 +22,7 @@ from app.core.errors import install_exception_handlers
 from app.core.logging import configure_logging
 from app.db import session as db
 from app.db.seed import seed_if_empty
-from app.services import complaints, proposals
+from app.services import billing, complaints, proposals
 
 logger = logging.getLogger("hive")
 
@@ -37,12 +37,15 @@ async def _sweep_loop() -> None:
                 promoted = await complaints.sweep_due(session)
                 finalized = await complaints.sweep_votes(session)
                 closed = await proposals.sweep_due(session)
+                bills_confirmed = await billing.sweep_due(session)
             if promoted:
                 logger.info("Sweep confirmed %d complaint(s): %s", len(promoted), promoted)
             if finalized:
                 logger.info("Sweep finalized %d complaint vote(s): %s", len(finalized), finalized)
             if closed:
                 logger.info("Sweep closed %d proposal(s): %s", len(closed), closed)
+            if bills_confirmed:
+                logger.info("Sweep confirmed %d bill(s): %s", len(bills_confirmed), bills_confirmed)
         except asyncio.CancelledError:
             raise
         except Exception:

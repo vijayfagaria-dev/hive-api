@@ -49,6 +49,19 @@ def getting_here_links(settings) -> Optional[dict]:
     if address:
         uber["dropoff[formatted_address]"] = address
     ola = {"drop_lat": lat, "drop_lng": lng, "utm_source": "hive"}
+    # Rapido has no public web-booking universal link (unlike Uber/Ola), so use an
+    # Android intent URL: it opens the Rapido app with the drop pre-filled if installed,
+    # else falls back to the web. (iOS Rapido deep-linking is unreliable; iOS just opens
+    # the fallback.) Mirrors Uber/Ola: coordinates + place are passed, not a bare home page.
+    rapido_q = urlencode(
+        {"destinationLat": lat, "destinationLng": lng, "destinationAddress": place},
+        quote_via=quote,
+    )
+    rapido = (
+        f"intent://book?{rapido_q}"
+        "#Intent;scheme=rapido;package=com.rapido.passenger;"
+        f"S.browser_fallback_url={quote('https://www.rapido.bike/', safe='')};end"
+    )
 
     return {
         "address": address,
@@ -57,5 +70,5 @@ def getting_here_links(settings) -> Optional[dict]:
         "geo": f"geo:{coords}?q={coords}({quote(place)})",
         "uber": "https://m.uber.com/ul/?" + urlencode(uber),
         "ola": "https://book.olacabs.com/?" + urlencode(ola),
-        "rapido": "https://www.rapido.bike/",
+        "rapido": rapido,
     }

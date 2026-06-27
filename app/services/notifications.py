@@ -34,13 +34,19 @@ def rupees(n: int) -> str:
     return f"₹{n:,}"
 
 
-def _link_url(fine_id: Optional[int] = None, proposal_id: Optional[int] = None) -> Optional[str]:
+def _link_url(
+    fine_id: Optional[int] = None,
+    proposal_id: Optional[int] = None,
+    bill_id: Optional[int] = None,
+) -> Optional[str]:
     if not settings.app_base_url:
         return None
     if fine_id is not None:
         return f"{settings.app_base_url}/complaints/{fine_id}"
     if proposal_id is not None:
         return f"{settings.app_base_url}/proposals/{proposal_id}"
+    if bill_id is not None:
+        return f"{settings.app_base_url}/bills"
     return None
 
 
@@ -55,14 +61,20 @@ async def notify_member(
     body: Optional[str] = None,
     fine_id: Optional[int] = None,
     proposal_id: Optional[int] = None,
+    bill_id: Optional[int] = None,
 ) -> None:
     """Record an in-app notification, then push + email + WhatsApp best-effort."""
     await notifications_repo.insert(
         session, member_id=member.id, kind=kind, title=title, body=body,
-        fine_id=fine_id, proposal_id=proposal_id,
+        fine_id=fine_id, proposal_id=proposal_id, bill_id=bill_id,
     )
-    url = _link_url(fine_id=fine_id, proposal_id=proposal_id)
-    tag_id = f"complaint-{fine_id}" if fine_id else (f"proposal-{proposal_id}" if proposal_id else None)
+    url = _link_url(fine_id=fine_id, proposal_id=proposal_id, bill_id=bill_id)
+    tag_id = (
+        f"complaint-{fine_id}" if fine_id
+        else f"proposal-{proposal_id}" if proposal_id
+        else f"bill-{bill_id}" if bill_id
+        else None
+    )
     await _push_web(session, member, title=title, body=body, url=url, tag_id=tag_id)
     await _send_email(member, subject=title, body=body, url=url)
     await _send_whatsapp(member, title=title, body=body, url=url)
@@ -77,11 +89,12 @@ async def notify_members(
     body: Optional[str] = None,
     fine_id: Optional[int] = None,
     proposal_id: Optional[int] = None,
+    bill_id: Optional[int] = None,
 ) -> None:
     for member in members:
         await notify_member(
             session, member, kind=kind, title=title, body=body,
-            fine_id=fine_id, proposal_id=proposal_id,
+            fine_id=fine_id, proposal_id=proposal_id, bill_id=bill_id,
         )
 
 
@@ -301,4 +314,56 @@ async def invite_accepted(session: AsyncSession, *, inviter: Member, who: str) -
     await notify_member(
         session, inviter, kind="member_invite_accepted",
         title="✅ Invite accepted", body=f"{who} joined the household.",
+    )
+
+
+# --- Bills (declare-and-confirm) -------------------------------------------
+
+async def bill_claimed(
+    session: AsyncSession,
+    *,
+    recipients: Sequence[Member],
+    bill_id: int,
+    payer_name: str,
+    bill_type: str,
+    amount: int,
+    confirm_hours: int,
+) -> None:
+    await notify_members(
+        session, recipients, kind="bill_claimed", bill_id=bill_id,
+        title=f"🧾 {payer_name} paid the {bill_type} bill — {rupees(amount)}",
+        body=(f"They've claimed it's paid. Dispute it in the app within {confirm_hours}h "
+              f"if that's wrong — otherwise it auto-confirms."),
+    )
+
+
+async def bill_disputed(
+    session: AsyncSession,
+    *,
+    recipients: Sequence[Member],
+    bill_id: int,
+    disputer_name: str,
+    bill_type: str,
+    reason: Optional[str] = None,
+) -> None:
+    tail = f" — “{reason}”" if reason else ""
+    await notify_members(
+        session, recipients, kind="bill_disputed", bill_id=bill_id,
+        title=f"⚠️ {disputer_name} disputed the {bill_type} bill",
+        body=f"It won't auto-confirm until the flat sorts it out{tail}.",
+    )
+
+
+async def bill_auto_confirmed(
+    session: AsyncSession,
+    *,
+    recipients: Sequence[Member],
+    bill_id: int,
+    bill_type: str,
+    amount: int,
+) -> None:
+    await notify_members(
+        session, recipients, kind="bill_auto_confirmed", bill_id=bill_id,
+        title=f"✅ {bill_type.capitalize()} bill confirmed — {rupees(amount)}",
+        body="Nobody disputed it in time, so it's settled.",
     )

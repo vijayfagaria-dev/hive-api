@@ -58,6 +58,8 @@ async def add(
     is_favorite: bool = False,
     severity_tier: str = "low",
     auto_confirm: bool = True,
+    level: Optional[int] = None,
+    applies_to: Optional[str] = None,
 ) -> Rule:
     rule = Rule(
         category=category,
@@ -66,6 +68,8 @@ async def add(
         is_favorite=is_favorite,
         severity_tier=severity_tier,
         auto_confirm=auto_confirm,
+        level=level,
+        applies_to=applies_to,
     )
     session.add(rule)
     await session.flush()

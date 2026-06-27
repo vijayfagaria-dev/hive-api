@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories import bills as bills_repo
 from app.repositories import fines as fines_repo
 from app.services import billing
 
@@ -56,4 +57,5 @@ async def dashboard(session: AsyncSession) -> dict:
         "dues": dues,
         "recent": await recent_complaints(session, 15),
         "overturn": overturn_rows,
+        "bills": await bills_repo.recent_bills(session),
     }

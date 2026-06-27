@@ -12,7 +12,9 @@ from app.domain.enums import Role
 from app.domain.nfc import SPOTS
 from app.repositories import members as members_repo
 from app.repositories import rules as rules_repo
+from app.domain.time import now_iso
 from app.schemas.accounts import member_out, self_out
+from app.schemas.bills import bill_out
 from app.schemas.common import overturn_out
 from app.schemas.complaints import recent_complaint_out
 from app.schemas.rules import rule_out
@@ -39,12 +41,14 @@ async def me(session: AsyncSession = Depends(get_session), member=Depends(requir
 @router.get("/dashboard")
 async def dashboard(session: AsyncSession = Depends(get_session), member=Depends(require_tenant)):
     data = await reporting.dashboard(session)
+    now_s = now_iso()
     return {
         "pot": data["pot"],
         "potCount": data["pot_count"],
         "dues": data["dues"],
         "recentFines": [recent_complaint_out(f) for f in data["recent"]],
         "overturn": [overturn_out(o) for o in data["overturn"]],
+        "bills": [bill_out(b, viewer_id=member.id, now=now_s) for b in data["bills"]],
     }
 
 
@@ -86,4 +90,6 @@ async def public_stats(session: AsyncSession = Depends(get_session)):
         "pot": await reporting.pot(session),
         "potCount": await reporting.owed_count(session),
         "hallOfShame": await reporting.hall_of_shame(session, limit=5),
+        # Public so a visitor can get directions to the flat without an account.
+        "gettingHere": location.getting_here_links(settings),
     }
