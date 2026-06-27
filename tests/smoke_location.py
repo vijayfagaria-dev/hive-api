@@ -38,7 +38,9 @@ def unit_checks():
     assert full["geo"].startswith("geo:12.9716,77.5946")        # android app chooser
     assert "m.uber.com/ul" in full["uber"] and "12.9716" in full["uber"]
     assert "book.olacabs.com" in full["ola"] and "drop_lat=12.9716" in full["ola"]
-    assert "rapido.bike" in full["rapido"]                       # opens the Rapido app
+    # Rapido: Android intent URL — opens the app with the drop pre-filled, else web fallback.
+    assert "scheme=rapido" in full["rapido"] and "destinationLat=12.9716" in full["rapido"]
+    assert "browser_fallback_url=" in full["rapido"] and "rapido.bike" in full["rapido"]
     print("ok full coords -> directions + geo + uber + ola + rapido links")
 
     assert getting_here_links(ns(flat_address="221B")) == {"address": "221B"}  # address only

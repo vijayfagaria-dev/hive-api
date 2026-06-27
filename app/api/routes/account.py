@@ -1,4 +1,4 @@
-"""Account routes — the member's own notification channels (email, WhatsApp, push)."""
+"""Account routes — the member's own notification channels (email, WhatsApp, push) + password."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_session, require_login
 from app.core.config import settings
 from app.repositories import push as push_repo
-from app.schemas.accounts import EmailBody, WhatsappBody
+from app.schemas.accounts import EmailBody, PasswordChangeBody, WhatsappBody
 from app.schemas.push import PushSubscribeBody, PushUnsubscribeBody
 from app.services import accounts
 
@@ -29,6 +29,14 @@ async def set_whatsapp(
 ):
     number = await accounts.set_whatsapp(session, member, body.whatsapp)
     return {"ok": True, "whatsapp": number}
+
+
+@router.post("/account/password")
+async def change_password(
+    body: PasswordChangeBody, session: AsyncSession = Depends(get_session), member=Depends(require_login)
+):
+    await accounts.change_password(session, member, body.currentPassword, body.newPassword)
+    return {"ok": True}
 
 
 @router.get("/push/public-key")

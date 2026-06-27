@@ -41,6 +41,8 @@ class Settings:
     # --- Complaint cooling window (Layer 1) ---
     # A pending complaint auto-confirms after this many hours unless disputed.
     cooling_hours: int = _int("COOLING_HOURS", 12)
+    # A declared bill auto-confirms after this many hours unless a tenant disputes it.
+    bill_confirm_hours: int = _int("BILL_CONFIRM_HOURS", 12)
     # How often the background sweep auto-confirms overdue complaints AND finalizes
     # votes whose window has closed.
     sweep_interval_seconds: int = _int("SWEEP_INTERVAL_SECONDS", 300)

@@ -10,4 +10,6 @@ def rule_out(rule) -> dict:
         "text": rule.text,
         "amount": rule.fine_amount,
         "isFavorite": bool(rule.is_favorite),
+        "level": rule.level,
+        "appliesTo": rule.applies_to,
     }

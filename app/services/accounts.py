@@ -12,7 +12,7 @@ from typing import Optional
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import Conflict, Unauthorized, Unprocessable
+from app.core.errors import Conflict, DomainError, Unauthorized, Unprocessable
 from app.core.security import hash_password, verify_password
 from app.db.models import Member
 from app.domain.enums import Role
@@ -119,6 +119,23 @@ async def set_whatsapp(session: AsyncSession, member: Member, whatsapp: Optional
     value = normalize_whatsapp(raw) if raw else None
     member.whatsapp = value
     return value
+
+
+async def change_password(
+    session: AsyncSession, member: Member, current_password: str, new_password: str
+) -> None:
+    """Change the logged-in member's own password, verifying the current one first.
+
+    Wrong current password / unchanged new password raise DomainError (400) — never
+    Unauthorized (401), so the member isn't bounced to login mid-change.
+    """
+    if not verify_password(current_password, member.password_hash):
+        raise DomainError("Current password is incorrect.")
+    if len(new_password) < 6:
+        raise Unprocessable("Password must be at least 6 characters.")
+    if verify_password(new_password, member.password_hash):
+        raise DomainError("New password must be different from the current one.")
+    member.password_hash = hash_password(new_password)
 
 
 async def set_role(session: AsyncSession, member: Member, role: str) -> None:
