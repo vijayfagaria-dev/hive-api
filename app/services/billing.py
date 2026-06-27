@@ -12,11 +12,23 @@ from app.core.config import settings
 from app.core.errors import DomainError, NotFound
 from app.db.models import Member
 from app.domain.enums import BillEventType, BillStatus
+from app.domain.money import split_by_ratio
 from app.domain.time import deadline_iso, now, now_iso
 from app.repositories import bills as bills_repo
 from app.repositories import fines as fines_repo
 from app.repositories import members as members_repo
 from app.services import notifications
+
+
+def _bill_shares(bill_type: str, total: int, tenants: list[Member]) -> list[int]:
+    """Rent splits by each tenant's rent_share_pct (must total 100); every other bill
+    (house help, wifi, electricity, water) splits equally. Always sums to `total`."""
+    if bill_type == "rent":
+        pcts = [t.rent_share_pct or 0 for t in tenants]
+        if sum(pcts) != 100:
+            raise DomainError("Set rent shares (they must total 100%) before declaring the rent.")
+        return split_by_ratio(total, pcts)
+    return split_by_ratio(total, [1] * len(tenants))  # equal
 
 
 async def create_bill(session: AsyncSession, *, type: str, total: int, month: str, payer: Member) -> int:
@@ -28,13 +40,12 @@ async def create_bill(session: AsyncSession, *, type: str, total: int, month: st
     if not tenants:
         raise DomainError("Cannot create a bill with no active tenants to split it.")
 
+    shares = _bill_shares(type, total, tenants)  # validates rent shares before creating anything
     bill = await bills_repo.create_bill(
         session, type=type, total=total, month=month, paid_by=payer.id,
         status=BillStatus.PENDING, confirm_deadline=deadline_iso(now(), settings.bill_confirm_hours),
     )
-    base, remainder = divmod(total, len(tenants))
-    for i, tenant in enumerate(tenants):
-        share = base + (remainder if i == 0 else 0)
+    for tenant, share in zip(tenants, shares):
         await bills_repo.add_share(session, bill_id=bill.id, member_id=tenant.id, share_amount=share)
     await bills_repo.log_event(
         session, bill_id=bill.id, type=BillEventType.CREATED, actor_id=payer.id,

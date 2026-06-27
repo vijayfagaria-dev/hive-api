@@ -14,6 +14,7 @@ from app.api.routes import (
     complaints,
     home,
     household,
+    money,
     notifications,
     payments,
     proposals,
@@ -33,3 +34,4 @@ api_router.include_router(account.router)
 api_router.include_router(proposals.router)
 api_router.include_router(rulebook.router)
 api_router.include_router(household.router)
+api_router.include_router(money.router)

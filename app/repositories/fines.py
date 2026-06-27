@@ -231,6 +231,40 @@ async def owed_count(session: AsyncSession) -> int:
     )
 
 
+async def paid_pot_in_period(session: AsyncSession, *, after: str, until: str) -> int:
+    """Registered fines actually PAID (collected into the pot), with resolved_at in (after, until]."""
+    return await session.scalar(
+        select(func.coalesce(func.sum(Fine.amount), 0)).where(
+            Fine.status.in_(OWED_STATUSES),
+            Fine.paid.is_(True),
+            Fine.resolved_at.is_not(None),
+            Fine.resolved_at > after,
+            Fine.resolved_at <= until,
+        )
+    )
+
+
+async def defaulters_in_period(session: AsyncSession, *, after: str, until: str) -> Sequence[Row]:
+    """Per-member UNPAID registered fines in the period (defaults): (member_id, member_name, owed)."""
+    stmt = (
+        select(
+            Fine.member_id,
+            Member.name.label("member_name"),
+            func.coalesce(func.sum(Fine.amount), 0).label("owed"),
+        )
+        .join(Member, Member.id == Fine.member_id)
+        .where(
+            Fine.status.in_(OWED_STATUSES),
+            Fine.paid.is_(False),
+            Fine.resolved_at.is_not(None),
+            Fine.resolved_at > after,
+            Fine.resolved_at <= until,
+        )
+        .group_by(Fine.member_id, Member.name)
+    )
+    return (await session.execute(stmt)).all()
+
+
 async def fines_owed_by(session: AsyncSession, member_id: int) -> int:
     return await session.scalar(
         select(func.coalesce(func.sum(Fine.amount), 0)).where(

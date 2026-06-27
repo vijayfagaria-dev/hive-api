@@ -367,3 +367,16 @@ async def bill_auto_confirmed(
         title=f"✅ {bill_type.capitalize()} bill confirmed — {rupees(amount)}",
         body="Nobody disputed it in time, so it's settled.",
     )
+
+
+# --- Money settlement -------------------------------------------------------
+
+async def settlement_closed(
+    session: AsyncSession, *, recipients: Sequence[Member], period: str, pot: int, leftover: int
+) -> None:
+    await notify_members(
+        session, recipients, kind="settlement_closed",
+        title=f"📊 Settlement closed — {period}",
+        body=(f"Fine pot {rupees(pot)} went toward rent; {rupees(leftover)} left over, "
+              f"split back by share. Open My Money for your statement."),
+    )

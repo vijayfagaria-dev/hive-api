@@ -43,6 +43,14 @@ class Settings:
     cooling_hours: int = _int("COOLING_HOURS", 12)
     # A declared bill auto-confirms after this many hours unless a tenant disputes it.
     bill_confirm_hours: int = _int("BILL_CONFIRM_HOURS", 12)
+    # --- Money ledger ---
+    # Fixed monthly flat RENT (₹), split by each tenant's rent_share_pct. Drives the
+    # 2-month settlement + the unpaid-fine penalty. 0 = not configured yet.
+    monthly_rent: int = _int("MONTHLY_RENT", 0)
+    # Unpaid-fine penalty = this %% of the full monthly rent, for this many months,
+    # redistributed to the other tenants by their rent ratio.
+    penalty_rent_pct: int = _int("PENALTY_RENT_PCT", 20)
+    penalty_months: int = _int("PENALTY_MONTHS", 2)
     # How often the background sweep auto-confirms overdue complaints AND finalizes
     # votes whose window has closed.
     sweep_interval_seconds: int = _int("SWEEP_INTERVAL_SECONDS", 300)

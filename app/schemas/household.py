@@ -21,6 +21,11 @@ class MemberPatch(BaseModel):
     name: str = Field(min_length=1, max_length=80)
 
 
+class RentSharesBody(BaseModel):
+    # { memberId: percent } for every active tenant; must total 100.
+    shares: dict[int, int]
+
+
 def member_admin_out(member) -> dict:
     """Management view of a member — adds lifecycle fields, no private contacts."""
     return {
@@ -31,6 +36,7 @@ def member_admin_out(member) -> dict:
         "isActive": bool(member.is_active),
         "joinedOn": member.joined_on,
         "leftOn": member.left_on,
+        "rentSharePct": member.rent_share_pct,
     }
 
 
