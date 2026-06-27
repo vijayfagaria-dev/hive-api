@@ -69,6 +69,20 @@ class BillEventType(StrEnum):
     RESOLVED = "resolved"              # reserved: future dispute resolution / voting
 
 
+# --- Money ledger (rent shares, advances, broker, settlement, penalties) -----
+
+class LedgerEntryType(StrEnum):
+    ADVANCE = "advance"        # money a member pre-paid (credit)
+    DEPOSIT = "deposit"        # security-deposit share (debit) / paid (credit)
+    BROKER = "broker"          # one-time broker fee, split by rent ratio
+    PENALTY = "penalty"        # unpaid-fine penalty: debit the defaulter, credit the others
+    PAYOUT = "payout"          # fine-pot leftover returned at a settlement
+    ADJUSTMENT = "adjustment"  # manual admin correction
+
+# Amount sign convention on ledger_entries: a POSITIVE amount is a credit (the flat owes
+# the member / they're ahead); a NEGATIVE amount is a debit (the member owes the flat).
+
+
 # --- Rule proposals ---------------------------------------------------------
 
 class ProposalStatus(StrEnum):

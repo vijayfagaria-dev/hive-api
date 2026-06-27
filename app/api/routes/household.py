@@ -18,6 +18,7 @@ from app.repositories import member_events as events_repo
 from app.schemas.household import (
     InviteBody,
     MemberPatch,
+    RentSharesBody,
     RoleBody,
     invitation_out,
     member_admin_out,
@@ -27,6 +28,17 @@ from app.services import invitations
 from app.services import members as members_svc
 
 router = APIRouter(prefix="/household", tags=["household"])
+
+
+@router.post("/rent-shares")
+async def set_rent_shares(
+    body: RentSharesBody,
+    session: AsyncSession = Depends(get_session),
+    member=Depends(require_permission(Permission.MANAGE_USERS)),
+):
+    """Set the rent split % for every active tenant (must total 100%). Admin only."""
+    tenants = await members_svc.set_rent_shares(session, actor=member, shares=body.shares)
+    return {"ok": True, "members": [member_admin_out(m) for m in tenants]}
 
 
 # --- Members ---------------------------------------------------------------

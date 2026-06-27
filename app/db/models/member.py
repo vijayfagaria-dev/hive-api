@@ -24,6 +24,9 @@ class Member(Base):
     email: Mapped[Optional[str]] = mapped_column(String)          # email notification channel
     whatsapp: Mapped[Optional[str]] = mapped_column(String)       # E.164; WhatsApp channel
     role: Mapped[str] = mapped_column(String, nullable=False, default=Role.TENANT)
+    # Rent split share (%), tenants only. The active tenants' shares sum to 100.
+    # Null = not configured -> rent falls back to an equal split.
+    rent_share_pct: Mapped[Optional[int]] = mapped_column(Integer)
     is_active: Mapped[bool] = mapped_column(Boolean(create_constraint=False), nullable=False, default=True)
     joined_on: Mapped[str] = mapped_column(String, nullable=False, default=now_iso)
     left_on: Mapped[Optional[str]] = mapped_column(String)
@@ -32,6 +35,9 @@ class Member(Base):
     __table_args__ = (
         CheckConstraint("role IN ('tenant', 'guest')", name="role_valid"),
         CheckConstraint("role = 'guest' OR host_id IS NULL", name="host_only_for_guest"),
+        CheckConstraint(
+            "rent_share_pct IS NULL OR rent_share_pct BETWEEN 0 AND 100", name="rent_share_valid"
+        ),
     )
 
 

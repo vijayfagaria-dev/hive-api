@@ -88,6 +88,23 @@ async def remove(session: AsyncSession, *, actor: Member, member_id: int) -> Mem
     return target
 
 
+async def set_rent_shares(session: AsyncSession, *, actor: Member, shares: dict[int, int]) -> list[Member]:
+    """Set the rent split % for the active tenants. Requires a share for every active
+    tenant (and only them), each 0–100, totalling exactly 100. Admin only."""
+    permissions.require(actor, Permission.MANAGE_USERS)
+    tenants = await members_repo.list_active_tenants(session)
+    tenant_ids = {t.id for t in tenants}
+    if set(shares) != tenant_ids:
+        raise Unprocessable("Provide a rent share for every active tenant (and only them).")
+    if any(not (0 <= v <= 100) for v in shares.values()):
+        raise Unprocessable("Each rent share must be between 0 and 100.")
+    if sum(shares.values()) != 100:
+        raise Unprocessable(f"Rent shares must total 100% (got {sum(shares.values())}%).")
+    for tenant in tenants:
+        tenant.rent_share_pct = shares[tenant.id]
+    return tenants
+
+
 async def rename(session: AsyncSession, *, actor: Member, member_id: int, name: str) -> Member:
     permissions.require(actor, Permission.MANAGE_USERS)
     cleaned = clean(name, max_len=80)

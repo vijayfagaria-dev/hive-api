@@ -4,6 +4,7 @@
 from app.db.models.bill import Bill, BillEvent, BillShare
 from app.db.models.fine import Fine, FineEvent, FineProof, FineVote
 from app.db.models.invitation import Invitation
+from app.db.models.ledger import LedgerEntry, Settlement
 from app.db.models.member import Member
 from app.db.models.member_event import MemberEvent
 from app.db.models.notification import Notification
@@ -30,6 +31,8 @@ __all__ = [
     "Bill",
     "BillShare",
     "BillEvent",
+    "LedgerEntry",
+    "Settlement",
     "Notification",
     "PushSubscription",
     "RuleProposal",

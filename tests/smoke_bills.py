@@ -125,7 +125,7 @@ async def main():
         print("ok sweep auto-confirms overdue, skips disputed, idempotent")
 
         # --- deadline enforcement ---------------------------------------------
-        b3 = await create(amit, type="rent", total=500)
+        b3 = await create(amit, type="water", total=500)  # non-rent: no shares needed
         await set_deadline_past(b3)
         try:
             await dispute(b3, rohit); assert False           # window closed
