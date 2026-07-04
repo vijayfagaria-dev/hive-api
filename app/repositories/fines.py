@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.db.models import Fine, FineEvent, FineProof, FineVote, Member, Rule
-from app.domain.enums import FineStatus, OWED_STATUSES, Resolution
+from app.domain.enums import FineStatus, OWED_STATUSES, PaymentStatus, REJECTED_STATUSES, Resolution
 from app.domain.time import now_iso
 from app.repositories import fits_i64
 
@@ -87,6 +87,19 @@ async def due_vote_ids(session: AsyncSession, now_iso_str: str) -> list[int]:
     )
 
 
+async def due_payment_ids(session: AsyncSession, now_iso_str: str) -> list[int]:
+    """Ids of OWED fines whose pay-by countdown has elapsed (-> OVERDUE)."""
+    return list(
+        await session.scalars(
+            select(Fine.id).where(
+                Fine.payment_status == PaymentStatus.OWED,
+                Fine.pay_by.is_not(None),
+                Fine.pay_by < now_iso_str,
+            )
+        )
+    )
+
+
 async def recent(session: AsyncSession, limit: int = 20) -> Sequence[Row]:
     """Recent complaints with accused/accuser names + rule text (for the dashboard)."""
     accused = aliased(Member)
@@ -97,6 +110,7 @@ async def recent(session: AsyncSession, limit: int = 20) -> Sequence[Row]:
             Fine.amount,
             Fine.status,
             Fine.paid,
+            Fine.payment_status,
             Fine.ts,
             accused.name.label("member_name"),
             accuser.name.label("accuser_name"),
@@ -306,10 +320,14 @@ async def hall_of_shame(session: AsyncSession, limit: int = 10) -> list[dict]:
 
 
 async def overturn_rows(session: AsyncSession) -> Sequence[Row]:
-    """Per active member: complaints filed, still-standing, overturned. The rate
-    is computed in the reporting service (presentation), not here."""
-    upheld = func.coalesce(func.sum(case((Fine.status.in_(("confirmed", "upheld")), 1), else_=0)), 0)
-    overturned = func.coalesce(func.sum(case((Fine.status.in_(("void", "disputed")), 1), else_=0)), 0)
+    """Per active member who has had **at least one complaint overturned**: complaints
+    filed, still-standing, overturned. The inclusion gate (HAVING overturned > 0) lives
+    here — it's an aggregation concern, not presentation math — so a reporter with a 0%
+    false-report rate never reaches the "biggest false reporter" board. "Overturned"
+    means a *decided* rejection (REJECTED_STATUSES = VOID only); an in-flight DISPUTED
+    vote is not a rejection. The rate itself is computed in the reporting service."""
+    upheld = func.coalesce(func.sum(case((Fine.status.in_(OWED_STATUSES), 1), else_=0)), 0)
+    overturned = func.coalesce(func.sum(case((Fine.status.in_(REJECTED_STATUSES), 1), else_=0)), 0)
     stmt = (
         select(
             Member.name,
@@ -321,6 +339,7 @@ async def overturn_rows(session: AsyncSession) -> Sequence[Row]:
         .outerjoin(Fine, Fine.added_by == Member.id)
         .where(Member.is_active.is_(True))
         .group_by(Member.id, Member.name)
+        .having(overturned > 0)
         .order_by(overturned.desc(), func.count(Fine.id).desc())
     )
     return (await session.execute(stmt)).all()

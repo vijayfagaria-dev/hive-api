@@ -94,9 +94,9 @@ async def record_payment(
     body: PaymentBody, session: AsyncSession = Depends(get_session), member=Depends(require_tenant)
 ):
     """Record a real transfer (settling a debt, or paying the house/landlord when toId is null)."""
-    p = await expenses_repo.insert_payment(
-        session, from_id=body.fromId, to_id=body.toId, amount=body.amount,
-        method=body.method, note=body.note, created_by=member.id,
+    p = await expenses.record_payment(
+        session, actor=member, from_id=body.fromId, to_id=body.toId, amount=body.amount,
+        method=body.method, note=body.note,
     )
     return {"ok": True, "paymentId": p.id}
 
@@ -132,6 +132,15 @@ async def settle_txn_paid(
 ):
     """Record that a proposed transfer actually happened (writes a payment)."""
     return await settle_up.mark_txn_paid(session, actor=member, txn_id=txn_id)
+
+
+@router.post("/settle/txn/{txn_id}/cancel")
+async def settle_txn_cancel(
+    txn_id: int, session: AsyncSession = Depends(get_session), member=Depends(require_tenant)
+):
+    """Cancel a proposed transfer that no longer applies (e.g. paid directly), so it
+    doesn't sit 'proposed' forever."""
+    return await settle_up.cancel_txn(session, actor=member, txn_id=txn_id)
 
 
 # --- rent (landlord obligation; ₹target validated) -------------------------

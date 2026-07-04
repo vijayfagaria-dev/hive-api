@@ -22,8 +22,16 @@ from typing import Optional, Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.errors import DomainError, NotFound
-from app.domain.enums import OWED_STATUSES, EventType, FineStatus, Resolution, Vote
+from app.core.errors import DomainError, Forbidden, NotFound
+from app.domain.enums import (
+    OWED_STATUSES,
+    PAYABLE_STATUSES,
+    EventType,
+    FineStatus,
+    PaymentStatus,
+    Resolution,
+    Vote,
+)
 from app.domain.time import deadline_iso, iso, now, now_iso
 from app.repositories import fines as fines_repo
 from app.repositories import members as members_repo
@@ -36,6 +44,46 @@ Proof = dict
 
 def rupees(n: int) -> str:
     return f"₹{n:,}"
+
+
+# --- Payment lifecycle (Bug 2: registration creates a debt; it never settles) ---
+
+async def _register_obligation(session: AsyncSession, fine) -> None:
+    """A fine has just been REGISTERED (accepted / auto-confirmed / upheld). Move it into
+    the payment lifecycle: OWED, with a pay-by countdown. Acceptance acknowledges
+    responsibility only — the debt is now pending payment, NOT settled."""
+    if fine.payment_status != PaymentStatus.NOT_OWED:
+        return
+    fine.payment_status = PaymentStatus.OWED
+    fine.pay_by = deadline_iso(now(), settings.payment_window_hours)
+    await fines_repo.log_event(
+        session, fine_id=fine.id, type=EventType.PAYMENT_DUE,
+        detail=f"registered — pay by {fine.pay_by}",
+    )
+
+
+# --- Authorization (one source of truth for who may act on a complaint) ------
+
+def allowed_actions(fine, viewer_id: int) -> dict:
+    """The single source of truth for who may act on a complaint. Feeds BOTH the wire
+    `can_*` flags (get_detail) and the service-layer enforcement guards, so the two can
+    never drift apart.
+
+    Only the **accused** may respond to a pending complaint — Accept, Deny, or Ignore
+    (Ignore = take no action; the cooling sweep then auto-confirms). Denying opens a
+    neutral-member vote, on which only members who are neither accuser nor accused may
+    vote. (This replaced the earlier "anyone may Deny" rule — see DESIGN.md → Complaint
+    workflow.)"""
+    is_accused = fine.member_id == viewer_id
+    pending = fine.status == FineStatus.PENDING
+    return {
+        "can_accept": pending and is_accused,
+        "can_dispute": pending and is_accused,
+        "can_vote": (
+            fine.status == FineStatus.DISPUTED
+            and viewer_id not in (fine.added_by, fine.member_id)
+        ),
+    }
 
 
 # --- Create ----------------------------------------------------------------
@@ -146,7 +194,7 @@ async def accept(session: AsyncSession, fine_id: int, by_member: int) -> bool:
     if fine is None:
         raise DomainError(f"Unknown complaint: {fine_id}.")
     if fine.member_id != by_member:
-        raise DomainError("Only the accused can accept a complaint.")
+        raise Forbidden("Only the accused can accept a complaint.")
     if fine.status != FineStatus.PENDING:
         return False
 
@@ -154,13 +202,15 @@ async def accept(session: AsyncSession, fine_id: int, by_member: int) -> bool:
     fine.resolution = Resolution.ACCEPTED
     fine.resolved_at = now_iso()
     await fines_repo.log_event(session, fine_id=fine_id, type=EventType.ACCEPTED, actor_id=by_member)
+    await _register_obligation(session, fine)  # -> OWED (payment pending); NOT settled
 
     accused = await members_repo.get(session, fine.member_id)
     accuser = await members_repo.get(session, fine.added_by)
     await notifications.complaint_resolved(
         session, recipients=[m for m in (accuser, accused) if m is not None], fine_id=fine_id,
         title=f"✅ Complaint accepted — {rupees(fine.amount)}",
-        body=f"{accused.name if accused else 'The accused'} accepted it. Registered, no vote needed.",
+        body=(f"{accused.name if accused else 'The accused'} accepted responsibility. Registered — "
+              f"now pay {rupees(fine.amount)} into the pot by {fine.pay_by}."),
         kind="complaint_registered",
     )
     return True
@@ -173,10 +223,13 @@ async def dispute(
     reason: Optional[str] = None,
 ) -> bool:
     """Deny -> open a neutral-member vote (or void if there are no eligible
-    voters). True iff it moved out of pending."""
+    voters). Only the accused may deny (enforced here AND at the route). True iff it
+    moved out of pending."""
     fine = await fines_repo.get(session, fine_id)
     if fine is None:
         raise DomainError(f"Unknown complaint: {fine_id}.")
+    if by_member is None or fine.member_id != by_member:
+        raise Forbidden("Only the accused can deny this complaint.")
     if fine.status != FineStatus.PENDING:
         return False
 
@@ -275,6 +328,8 @@ async def finalize_vote(session: AsyncSession, fine_id: int) -> str:
     await fines_repo.log_event(
         session, fine_id=fine_id, type=EventType.VOTE_FINALIZED, detail=detail
     )
+    if upheld:
+        await _register_obligation(session, fine)  # -> OWED (payment pending)
 
     accuser = await members_repo.get(session, fine.added_by)
     accused = await members_repo.get(session, fine.member_id)
@@ -307,12 +362,13 @@ async def sweep_due(session: AsyncSession) -> list[int]:
         fine = await fines_repo.get(session, fine_id)
         if fine is None:
             continue
+        await _register_obligation(session, fine)  # -> OWED (payment pending)
         accused = await members_repo.get(session, fine.member_id)
         if accused is not None:
             await notifications.complaint_resolved(
                 session, recipients=[accused], fine_id=fine_id,
                 title=f"✅ Complaint auto-confirmed — {rupees(fine.amount)}",
-                body="Nobody disputed it in time, so it's now registered.",
+                body=f"Nobody disputed it in time, so it's registered — pay {rupees(fine.amount)} by {fine.pay_by}.",
             )
     return promoted
 
@@ -328,18 +384,92 @@ async def sweep_votes(session: AsyncSession) -> list[int]:
 # --- Pay -------------------------------------------------------------------
 
 async def mark_paid(session: AsyncSession, fine_id: int) -> bool:
-    """Record a fine paid into the jar (a claim, not a transfer). True iff it
-    flipped unpaid -> paid. Only confirmed/upheld fines are payable."""
+    """The accused marks a registered fine paid into the jar (a claim, not a transfer).
+    Only an OWED/OVERDUE fine is payable. Settles immediately unless verification is on,
+    in which case it awaits a verify step (MARKED_PAID -> SETTLED). Keeps the `paid`
+    alias in sync. True iff it moved out of owed/overdue."""
     fine = await fines_repo.get(session, fine_id)
     if fine is None:
         raise DomainError(f"Unknown fine: {fine_id}.")
-    if fine.status not in OWED_STATUSES:
-        raise DomainError("Only a confirmed fine can be marked paid.")
-    if fine.paid:
-        return False
-    fine.paid = True
+    if fine.payment_status not in PAYABLE_STATUSES:
+        if fine.payment_status == PaymentStatus.NOT_OWED:
+            raise DomainError("Only a registered fine can be marked paid.")
+        return False  # already marked_paid / settled
+    fine.payment_status = (
+        PaymentStatus.MARKED_PAID if settings.payment_verification else PaymentStatus.SETTLED
+    )
+    fine.paid = True  # derived alias, kept in sync for existing queries/frontend
+    fine.paid_at = now_iso()
     await fines_repo.log_event(session, fine_id=fine_id, type=EventType.PAID, actor_id=fine.member_id)
     return True
+
+
+async def verify_paid(session: AsyncSession, fine_id: int) -> bool:
+    """Confirm a self-attested payment (MARKED_PAID -> SETTLED). No-op unless verification
+    is enabled and the fine is awaiting it. Reserved for the future verification UI."""
+    fine = await fines_repo.get(session, fine_id)
+    if fine is None:
+        raise DomainError(f"Unknown fine: {fine_id}.")
+    if fine.payment_status != PaymentStatus.MARKED_PAID:
+        return False
+    fine.payment_status = PaymentStatus.SETTLED
+    await fines_repo.log_event(session, fine_id=fine_id, type=EventType.SETTLED)
+    return True
+
+
+async def sweep_overdue(session: AsyncSession) -> list[int]:
+    """Move OWED fines whose pay-by has elapsed to OVERDUE (and remind the accused).
+    Runs on the background sweep. Returns the ids moved."""
+    overdue_ids = await fines_repo.due_payment_ids(session, now_iso())
+    for fine_id in overdue_ids:
+        fine = await fines_repo.get(session, fine_id)
+        if fine is None:
+            continue
+        fine.payment_status = PaymentStatus.OVERDUE
+        await fines_repo.log_event(
+            session, fine_id=fine_id, type=EventType.OVERDUE, detail="payment window elapsed"
+        )
+        accused = await members_repo.get(session, fine.member_id)
+        if accused is not None:
+            await notifications.complaint_resolved(
+                session, recipients=[accused], fine_id=fine_id,
+                title=f"⏳ Fine overdue — {rupees(fine.amount)}",
+                body="Your fine is past its pay-by date. Please pay it into the pot.",
+                kind="fine_overdue",
+            )
+    return overdue_ids
+
+
+async def owed_fines_for(session: AsyncSession, member_id: int, fine_ids: Sequence[int]) -> list:
+    """The caller's own, currently-payable fines among `fine_ids` (deduped, validated).
+    Raises if any id isn't the member's, or isn't an unpaid registered fine — so a UPI
+    amount can only ever be built from a real, owed set the member actually holds."""
+    out, seen = [], set()
+    for fid in fine_ids:
+        if fid in seen:
+            continue
+        seen.add(fid)
+        fine = await fines_repo.get(session, fid)
+        if fine is None or fine.member_id != member_id:
+            raise NotFound("That's not your fine.")
+        if fine.payment_status not in PAYABLE_STATUSES:
+            raise DomainError("One of those fines isn't payable (not registered, or already paid).")
+        out.append(fine)
+    return out
+
+
+async def mark_fines_paid(session: AsyncSession, member_id: int, fine_ids: Sequence[int]) -> dict:
+    """Mark an explicit set of the caller's fines paid, each independently. Binds a
+    payment to exactly the chosen fines (Bug 1: a per-fine payment can't settle others)."""
+    if not fine_ids:
+        raise DomainError("No fines selected to pay.")
+    fines = await owed_fines_for(session, member_id, fine_ids)
+    paid, total = [], 0
+    for fine in fines:
+        if await mark_paid(session, fine.id):
+            paid.append(fine.id)
+            total += fine.amount
+    return {"paid": paid, "count": len(paid), "totalPaid": total}
 
 
 # --- Detail (assembled view for the API) -----------------------------------
@@ -355,6 +485,7 @@ async def get_detail(session: AsyncSession, fine_id: int, viewer_id: int) -> dic
     tally = await fines_repo.vote_tally(session, fine_id)
     eligible = await members_repo.eligible_voters(session, fine.added_by, fine.member_id)
     my_vote = await fines_repo.get_vote(session, fine_id, viewer_id)
+    actions = allowed_actions(fine, viewer_id)
     return {
         "fine": fine,
         "accused": accused,
@@ -365,7 +496,5 @@ async def get_detail(session: AsyncSession, fine_id: int, viewer_id: int) -> dic
         "my_vote": my_vote.vote if my_vote else None,
         "proofs": await fines_repo.list_proofs(session, fine_id),
         "events": await fines_repo.list_events(session, fine_id),
-        "can_accept": fine.status == FineStatus.PENDING and fine.member_id == viewer_id,
-        "can_dispute": fine.status == FineStatus.PENDING and fine.added_by != viewer_id,
-        "can_vote": fine.status == FineStatus.DISPUTED and viewer_id not in (fine.added_by, fine.member_id),
+        **actions,
     }

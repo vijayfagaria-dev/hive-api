@@ -50,7 +50,9 @@ async def recent_complaints(session: AsyncSession, limit: int = 15):
 async def dashboard(session: AsyncSession) -> dict:
     """Everything the tenant dashboard shows (raw pieces; the schema maps them)."""
     dues = [d for d in await billing.all_dues(session) if d["total"] > 0]
-    overturn_rows = [o for o in await overturn(session) if o["filed"]]
+    # The "biggest false reporter" board: overturn() only returns members with >=1
+    # overturned complaint now (the HAVING lives in the repo query), so no extra gate.
+    overturn_rows = await overturn(session)
     return {
         "pot": await pot(session),
         "pot_count": await owed_count(session),

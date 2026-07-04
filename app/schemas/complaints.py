@@ -43,6 +43,7 @@ def recent_complaint_out(row) -> dict:
         "amount": row.amount,
         "status": row.status,
         "paid": bool(row.paid),
+        "paymentStatus": getattr(row, "payment_status", None),
         "date": row.ts[:10],
     }
 
@@ -61,6 +62,9 @@ def detail_out(detail: dict) -> dict:
         "rule": detail["rule_text"],
         "amount": fine.amount,
         "paid": bool(fine.paid),
+        "paymentStatus": fine.payment_status,
+        "payBy": fine.pay_by,
+        "paidAt": fine.paid_at,
         "disputeReason": fine.dispute_reason,
         "coolingDeadline": fine.confirm_deadline,
         "voteDeadline": fine.vote_deadline,

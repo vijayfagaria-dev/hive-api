@@ -11,14 +11,24 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import DomainError, NotFound, Unprocessable
+from app.core.errors import Conflict, DomainError, NotFound, Unprocessable
 from app.db.models import Member
-from app.domain.enums import ExpenseCategory, ExpenseEventType, ExpenseStatus, SplitStrategy
+from app.domain import permissions
+from app.domain.enums import (
+    ExpenseCategory,
+    ExpenseEventType,
+    ExpenseStatus,
+    PaymentMethod,
+    Permission,
+    SplitStrategy,
+)
 from app.domain.splits import compute_splits
-from app.domain.time import now_iso
+from app.domain.time import deadline_iso, now, now_iso
 from app.repositories import expenses as expenses_repo
 from app.repositories import members as members_repo
 from app.services import notifications
+
+_PAYMENT_METHODS = {m.value for m in PaymentMethod}
 
 _CATEGORIES = {c.value for c in ExpenseCategory}
 _STRATEGIES = {s.value for s in SplitStrategy}
@@ -44,6 +54,7 @@ async def create_expense(
     description: Optional[str], strategy: str, params: Optional[dict],
     participant_ids: list[int], incurred_on: str,
 ) -> int:
+    permissions.require(actor, Permission.CREATE_EXPENSE)
     if category not in _CATEGORIES:
         raise Unprocessable(f"Unknown category {category!r}.")
     if strategy not in _STRATEGIES:
@@ -92,6 +103,7 @@ async def edit_expense(
 ) -> None:
     """Re-cost an expense: re-run the strategy, replace the split snapshot, audit it.
     Balances recompute automatically (they're derived); settlement history is preserved."""
+    permissions.require(actor, Permission.EDIT_EXPENSE)
     exp = await expenses_repo.get(session, expense_id)
     if exp is None:
         raise NotFound("No such expense.")
@@ -126,8 +138,40 @@ async def edit_expense(
     )
 
 
+async def record_payment(
+    session: AsyncSession, *, actor: Member, from_id: int, to_id: Optional[int], amount: int,
+    method: str = "upi", note: Optional[str] = None,
+):
+    """Record a real transfer (settling a member debt, or paying the house/landlord when
+    to_id is null). Validated: positive amount, known method, active members, no
+    self-payment, and a short-window duplicate guard so a double-submit can't fabricate
+    credit (the old route inserted with zero checks — a retry corrupted every balance)."""
+    permissions.require(actor, Permission.SETTLE)
+    if amount <= 0:
+        raise Unprocessable("Amount must be positive.")
+    if method not in _PAYMENT_METHODS:
+        raise Unprocessable(f"Unknown payment method {method!r}.")
+    active = {m.id: m for m in await members_repo.list_active(session)}
+    if from_id not in active:
+        raise Unprocessable("The payer must be an active member.")
+    if to_id is not None:
+        if to_id not in active:
+            raise Unprocessable("The payee must be an active member.")
+        if to_id == from_id:
+            raise DomainError("A payment can't be from and to the same person.")
+    since = deadline_iso(now(), -1 / 60)  # 60-second double-submit window
+    if await expenses_repo.find_recent_payment_duplicate(
+        session, from_id=from_id, to_id=to_id, amount=amount, method=method, note=note, since_iso=since
+    ):
+        raise Conflict("That payment was just recorded — not recording it twice.")
+    return await expenses_repo.insert_payment(
+        session, from_id=from_id, to_id=to_id, amount=amount, method=method, note=note, created_by=actor.id
+    )
+
+
 async def void_expense(session: AsyncSession, *, actor: Member, expense_id: int) -> None:
     """Soft-delete an expense — it drops out of every balance, its history stays."""
+    permissions.require(actor, Permission.EDIT_EXPENSE)
     exp = await expenses_repo.get(session, expense_id)
     if exp is None:
         raise NotFound("No such expense.")

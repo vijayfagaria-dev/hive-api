@@ -26,6 +26,26 @@ class Resolution(StrEnum):
     VOID = "void"
 
 
+class PaymentStatus(StrEnum):
+    """The fine's PAYMENT lifecycle — a second, explicit axis kept separate from the
+    complaint-resolution `status` (Bug 2). Acceptance/registration only creates the
+    obligation (OWED); it never settles. Replaces the old lone `paid` boolean.
+
+        NOT_OWED ──register──► OWED ──pay_by elapses──► OVERDUE
+                                 │                         │
+                                 └──── mark paid ──────────┘
+                                          ▼
+                                    MARKED_PAID ──verify──► SETTLED
+                                          └──(verification off)──► SETTLED
+    """
+
+    NOT_OWED = "not_owed"        # complaint not registered as a debt (pending / void)
+    OWED = "owed"                # registered; payment pending, countdown running
+    OVERDUE = "overdue"          # pay_by elapsed, still unpaid
+    MARKED_PAID = "marked_paid"  # payer self-attested; awaiting optional verification
+    SETTLED = "settled"          # done
+
+
 class Vote(StrEnum):
     UPHOLD = "uphold"
     VOID = "void"
@@ -51,7 +71,10 @@ class EventType(StrEnum):
     VOTE_CAST = "vote_cast"
     VOTE_FINALIZED = "vote_finalized"
     AUTO_CONFIRMED = "auto_confirmed"
-    PAID = "paid"
+    PAYMENT_DUE = "payment_due"    # obligation registered; pay-by countdown started
+    OVERDUE = "overdue"            # pay-by elapsed, still unpaid
+    PAID = "paid"                  # payer marked it paid
+    SETTLED = "settled"            # verified paid (when verification is enabled)
 
 
 # --- Bills (declare-and-confirm lifecycle) ----------------------------------
@@ -194,6 +217,15 @@ PROPOSAL_PHASE: dict[str, str] = {
 # Statuses that count as money owed / in the pot.
 OWED_STATUSES: tuple[str, ...] = (FineStatus.CONFIRMED, FineStatus.UPHELD)
 
+# Payment states in which a registered fine can still be paid (an obligation exists).
+PAYABLE_STATUSES: tuple[str, ...] = (PaymentStatus.OWED, PaymentStatus.OVERDUE)
+
+# Statuses that count as a *decided rejection* of a complaint — i.e. the reporter
+# was overturned. Only VOID is terminal-rejected; DISPUTED is an in-flight vote and
+# must NOT count (it isn't a rejection yet). Mirrors OWED_STATUSES so aggregation
+# predicates never drift back into inline string literals.
+REJECTED_STATUSES: tuple[str, ...] = (FineStatus.VOID,)
+
 # The only four bills this app splits (closed by design).
 BILL_TYPES: tuple[str, ...] = ("rent", "house_help", "electricity", "water")
 
@@ -219,6 +251,11 @@ class Permission(StrEnum):
     UPDATE_ROLE = "update_role"
     REMOVE_MEMBER = "remove_member"
     MANAGE_USERS = "manage_users"  # umbrella; also marks a role as "admin"
+    # Money surface (previously gated only at the route with require_tenant; now also
+    # enforced in the services for defense-in-depth). Tenants hold all of these.
+    CREATE_EXPENSE = "create_expense"
+    EDIT_EXPENSE = "edit_expense"
+    SETTLE = "settle"              # record payments / close a settle-up run
 
 
 class MemberEventType(StrEnum):

@@ -25,3 +25,19 @@ def split_by_ratio(total: int, weights: list[int]) -> list[int]:
     for k in range(remaining):
         floors[order[k]] += 1
     return floors
+
+
+def rent_shares_set(pcts: list[int]) -> bool:
+    """True iff explicit rent shares are configured — the per-tenant %s total exactly 100.
+    One definition of the rule that was copy-pasted across billing/ledger. WRITES that
+    require valid shares (declaring rent, a ratio charge) check this and raise; derived
+    READS fall back to an equal split via `rent_ratio_weights`."""
+    return sum(pcts) == 100
+
+
+def rent_ratio_weights(pcts: list[int]) -> list[int]:
+    """Weights for a rent-ratio split: the given per-tenant %s if they total exactly 100,
+    else an equal split (1 each). The single home for the 'total-100-else-equal' rule that
+    settlement payouts and rent targets used to each re-implement."""
+    pcts = list(pcts)
+    return pcts if rent_shares_set(pcts) else [1] * len(pcts)

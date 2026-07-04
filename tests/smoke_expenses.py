@@ -132,6 +132,23 @@ async def main():
                 pass
         print("ok settle-up: preview + close persists transfers; mark-paid records a payment")
 
+        # a still-proposed transfer can be cancelled (e.g. the debt was paid directly), so it
+        # no longer sits 'proposed' forever
+        async with session_scope() as s:
+            remaining = await expenses_repo.list_open_txns(s)
+        assert remaining, "expected other proposed transfers"
+        async with session_scope() as s:
+            await settle_up.cancel_txn(s, actor=a, txn_id=remaining[0].id)
+        async with session_scope() as s:
+            t3 = await expenses_repo.get_settle_txn(s, remaining[0].id)
+        assert t3.status == "cancelled"
+        async with session_scope() as s:
+            try:
+                await settle_up.cancel_txn(s, actor=a, txn_id=remaining[0].id); assert False  # not proposed anymore
+            except Exception:
+                pass
+        print("ok settle-up: a proposed transfer can be cancelled (no longer stuck)")
+
         # --- edit recomputes splits + balances; delete drops it out entirely ---
         async with session_scope() as s:
             eid2 = await expenses.create_expense(
@@ -155,12 +172,18 @@ async def main():
         async with session_scope() as s:
             await expenses.void_expense(s, actor=a, expense_id=eid2)
         assert (await net(d.id))["net"] == d_pre_del - (800 - 400)   # its +400 contribution removed
+        # a deleted expense is out of the feed too (matches balances), but still available
+        # for an explicit history view
+        async with session_scope() as s:
+            listed = [r.id for r in await expenses_repo.list_expenses(s)]
+            listed_all = [r.id for r in await expenses_repo.list_expenses(s, include_void=True)]
+        assert eid2 not in listed and eid2 in listed_all
         async with session_scope() as s:
             try:
                 await expenses.void_expense(s, actor=a, expense_id=eid2); assert False   # already void
             except Exception:
                 pass
-        print("ok edit/delete: edit re-splits + rebalances; delete voids it out of balances")
+        print("ok edit/delete: re-splits + rebalances; delete voids it out of balances AND the feed")
 
         print("\nEXPENSES SMOKE: ALL CHECKS PASSED")
     finally:

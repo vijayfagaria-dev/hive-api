@@ -18,7 +18,7 @@ from app.core.config import settings
 from app.core.errors import DomainError
 from app.domain import permissions
 from app.domain.enums import LedgerEntryType, Permission
-from app.domain.money import split_by_ratio
+from app.domain.money import rent_ratio_weights, split_by_ratio
 from app.domain.time import now_iso
 from app.repositories import fines as fines_repo
 from app.repositories import ledger as ledger_repo
@@ -38,8 +38,7 @@ async def _compute(session: AsyncSession) -> dict:
     leftover = max(0, pot - applied)
 
     tenants = await members_repo.list_active_tenants(session)
-    pcts = [t.rent_share_pct or 0 for t in tenants]
-    use = pcts if sum(pcts) == 100 else [1] * len(tenants)
+    use = rent_ratio_weights([t.rent_share_pct or 0 for t in tenants])
     payout_amts = split_by_ratio(leftover, use) if (leftover and tenants) else [0] * len(tenants)
     payouts = [
         {"memberId": t.id, "name": t.name, "amount": amt}

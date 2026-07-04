@@ -26,17 +26,35 @@ def main():
     # --- domain: link building across the four apps ---
     links = upi.payment_links("hivepot@okhdfcbank", "Hive Pot", 450, "Hive pot - Amit")
     assert set(links) == {"any", "gpay", "phonepe", "paytm"}
+    # 'any' = the NPCI-standard upi:// intent (also the QR payload).
     assert links["any"].startswith("upi://pay?")
-    assert links["gpay"].startswith("tez://upi/pay?")
-    assert links["phonepe"].startswith("phonepe://pay?")
-    assert links["paytm"].startswith("paytmmp://pay?")
+    # Per-app links are Android intent:// launchers (scheme=upi, real packages) — NOT the
+    # old vendor schemes (tez://, phonepe://, paytmmp://) that tripped "Insecure payment".
+    for app, package in (
+        ("gpay", "com.google.android.apps.nbu.paisa.user"),
+        ("phonepe", "com.phonepe.app"),
+        ("paytm", "net.one97.paytm"),
+    ):
+        assert links[app].startswith("intent://pay?"), links[app]
+        assert "scheme=upi;" in links[app]
+        assert f"package={package};" in links[app]
+        assert "S.browser_fallback_url=" in links[app]
+        assert "upi%3A%2F%2Fpay" in links[app]  # fallback is the canonical upi:// intent
+    # No deprecated vendor schemes survive anywhere.
+    assert not any(s in "".join(links.values()) for s in ("tez://", "phonepe://pay", "paytmmp://"))
     p = q(links["any"])
     assert p["pa"] == ["hivepot@okhdfcbank"] and p["pn"] == ["Hive Pot"]
     assert p["am"] == ["450.00"] and p["cu"] == ["INR"] and p["tn"] == ["Hive pot - Amit"]
     # spaces -> %20 (not '+'), '@' kept literal in the VPA, '-' unescaped
     assert "pa=hivepot@okhdfcbank" in links["any"]
     assert "Hive%20pot%20-%20Amit" in links["any"]
-    print("ok upi links: 4 apps, correct schemes, %20-encoded, literal @")
+    print("ok upi links: canonical upi:// + Android intent:// launchers, %20-encoded, literal @")
+
+    # txn_ref (reconciliation) threads into every link as tr=
+    reflinks = upi.payment_links("x@y", "Hive", 100, "t", txn_ref="HIVEFINE7")
+    assert q(reflinks["any"])["tr"] == ["HIVEFINE7"]
+    assert "tr=HIVEFINE7" in reflinks["gpay"]
+    print("ok upi txn_ref threads through all links")
 
     # open amount (None) omits am — payer types the amount
     assert "am=" not in upi.payment_links("x@y", "Hive", None, "t")["any"]
@@ -58,16 +76,23 @@ def main():
         SimpleNamespace(id=2, amount=100, rule_text="Noise"),
     ]
     out = pay_out(rows, member, cfg)
-    assert out["total"] == 150
-    assert out["upi"]["configured"] and out["upi"]["amount"] == 150
+    assert out["totalOwed"] == 150
+    # payAll is the explicit "pay everything" block (scope='all'); the per-fine blocks
+    # are scope='fine' — a single-fine payment can never be the whole total (Bug 1).
+    assert out["payAll"]["configured"] and out["payAll"]["amount"] == 150 and out["payAll"]["scope"] == "all"
     assert len(out["unpaid"]) == 2 and out["unpaid"][0]["upi"]["amount"] == 50
-    assert out["unpaid"][0]["upi"]["links"]["gpay"].startswith("tez://upi/pay?")
+    assert out["unpaid"][0]["upi"]["scope"] == "fine"
+    assert out["unpaid"][0]["upi"]["links"]["gpay"].startswith("intent://pay?")
     assert "Dishes" in q(out["unpaid"][0]["upi"]["links"]["any"])["tn"][0]
-    print("ok pay_out: total + per-fine links + personalized note")
+    # each fine's link is bound to *that* fine via a distinct txn_ref (per-fine binding)
+    assert out["unpaid"][0]["upi"]["txnRef"] == "HIVEFINE1"
+    assert q(out["unpaid"][1]["upi"]["links"]["any"])["tr"] == ["HIVEFINE2"]
+    assert "total" not in out and "upi" not in out  # deprecated aliases removed
+    print("ok pay_out: totalOwed + payAll(scope=all) + per-fine(scope=fine) + txnRef")
 
     # unconfigured: still lists the fines, just no pay links
     out0 = pay_out(rows, member, Settings(upi_vpa=""))
-    assert out0["total"] == 150 and out0["upi"] == {"configured": False}
+    assert out0["totalOwed"] == 150 and out0["payAll"] == {"configured": False}
     assert out0["unpaid"][0]["upi"] == {"configured": False}
     print("ok pay_out graceful when UPI unset")
 

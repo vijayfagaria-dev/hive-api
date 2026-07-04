@@ -89,6 +89,19 @@ async def main():
         assert rent_shares == [7600, 10800, 10800, 10800]
         print("ok bills: rent by ratio (10800/10800/10800/7600), others equal")
 
+        # A pending bill's shares are NOT dues yet; confirm the rent bill so they count
+        # (regression for the missing Bill.status filter in bills_owed_by/list_unpaid_shares).
+        async with session_scope() as s:
+            pending_owed = await bills_repo.bills_owed_by(s, tarun.id)
+            bill = await bills_repo.get_bill(s, bid)
+            bill.status = "confirmed"
+            bill.resolved_at = now_iso()
+        assert pending_owed == 0  # pending bill contributed nothing to dues
+        async with session_scope() as s:
+            confirmed_owed = await bills_repo.bills_owed_by(s, tarun.id)
+        assert confirmed_owed == 7600  # now that it's confirmed, the share is owed
+        print("ok bill-status guard: pending share not owed; confirmed share owed")
+
         # --- ledger: broker by ratio (debits) + an advance credit ---
         async with session_scope() as s:
             await ledger_svc.add_charge(s, actor=amit, type="broker", total=60000, reason="Broker fee", split="ratio")
@@ -130,15 +143,20 @@ async def main():
                 pass
         print("ok second close rejected (nothing new in the period)")
 
-        # --- My Money unifies fines + bills + ledger ---
+        # --- My Money: the single balance authority (expenses + payments + ledger + fines) ---
+        # Legacy bills were retired from the money net (expenses supersede them), so the rent
+        # bill above no longer appears here. Net = ledger − fines (no expenses in this test).
         async with session_scope() as s:
             tarun_live = await members_repo.get(s, tarun.id)
             stmt = await money.statement(s, tarun_live)
-        assert stmt["finesOwed"] == 500 and stmt["billsOwed"] == 7600  # unpaid fine + rent share
+            board = await money.all_balances(s)
+        assert stmt["finesOwed"] == 500
         assert stmt["ledgerBalance"] == -11461
-        assert stmt["net"] == -11461 - 500 - 7600 and stmt["owes"] == 19561
-        assert any(b["type"] == "rent" and b["amount"] == 7600 for b in stmt["bills"])
-        print("ok My Money: net unifies fines + bills + ledger (Tarun owes ₹19,561)")
+        assert "billsOwed" not in stmt and "bills" not in stmt  # bills off the money net
+        assert stmt["net"] == -11461 - 500 and stmt["owes"] == 11961
+        # /money and the admin /balances board agree — one authority, no divergence.
+        assert next(b for b in board if b["memberId"] == tarun.id)["net"] == stmt["net"]
+        print("ok My Money: net from the single authority; /money == /balances (Tarun owes ₹11,961)")
 
         print("\nMONEY SMOKE: ALL CHECKS PASSED")
     finally:

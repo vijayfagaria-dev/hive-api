@@ -20,7 +20,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
-from app.domain.enums import FineStatus
+from app.domain.enums import FineStatus, PaymentStatus
 from app.domain.time import now_iso
 
 
@@ -34,6 +34,12 @@ class Fine(Base):
     ts: Mapped[str] = mapped_column(String, nullable=False, default=now_iso)
     added_by: Mapped[int] = mapped_column(ForeignKey("members.id"), nullable=False)    # the accuser
     status: Mapped[str] = mapped_column(String, nullable=False, default=FineStatus.PENDING)
+    # Payment lifecycle — an explicit axis, separate from the complaint `status` (Bug 2).
+    # `paid` is kept in sync as a derived alias (paid == payment_status in marked_paid/settled)
+    # for backward compatibility with existing queries and the current frontend.
+    payment_status: Mapped[str] = mapped_column(String, nullable=False, default=PaymentStatus.NOT_OWED)
+    pay_by: Mapped[Optional[str]] = mapped_column(String)            # OWED countdown deadline
+    paid_at: Mapped[Optional[str]] = mapped_column(String)          # when the accused marked it paid
     paid: Mapped[bool] = mapped_column(Boolean(create_constraint=False), nullable=False, default=False)
     confirm_deadline: Mapped[Optional[str]] = mapped_column(String)  # pending auto-confirms after this
     dispute_reason: Mapped[Optional[str]] = mapped_column(String)
@@ -59,9 +65,20 @@ class Fine(Base):
             "status IN ('pending', 'confirmed', 'disputed', 'void', 'upheld')",
             name="status_valid",
         ),
+        CheckConstraint(
+            "payment_status IN ('not_owed', 'owed', 'overdue', 'marked_paid', 'settled')",
+            name="payment_status_valid",
+        ),
+        # A fine only carries a payment obligation once it's registered — makes the old
+        # illegal "void + paid" state unrepresentable.
+        CheckConstraint(
+            "payment_status = 'not_owed' OR status IN ('confirmed', 'upheld')",
+            name="payment_requires_registered",
+        ),
         Index("idx_fines_member", "member_id"),
         Index("idx_fines_addedby", "added_by"),
         Index("idx_fines_status", "status"),
+        Index("idx_fines_payment", "payment_status", "pay_by"),
     )
 
 

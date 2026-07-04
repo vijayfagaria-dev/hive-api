@@ -23,7 +23,7 @@ os.environ["VOTE_WINDOW_HOURS"] = "24"
 os.environ["DUPLICATE_WINDOW_HOURS"] = "0"
 os.environ["MAX_COMPLAINTS_PER_DAY"] = "0"
 
-from app.core.errors import DomainError  # noqa: E402
+from app.core.errors import DomainError, Forbidden, NotFound  # noqa: E402
 from app.db.session import create_all, dispose, session_scope  # noqa: E402
 from app.repositories import fines as fines_repo  # noqa: E402
 from app.repositories import members as members_repo  # noqa: E402
@@ -85,9 +85,19 @@ async def sweep_votes():
         return await complaints.sweep_votes(s)
 
 
+async def sweep_overdue():
+    async with session_scope() as s:
+        return await complaints.sweep_overdue(s)
+
+
 async def mark_paid(fid):
     async with session_scope() as s:
         return await complaints.mark_paid(s, fid)
+
+
+async def mark_fines_paid(mid, ids):
+    async with session_scope() as s:
+        return await complaints.mark_fines_paid(s, mid, ids)
 
 
 async def set_field(fid, **fields):
@@ -178,18 +188,34 @@ async def main() -> None:
             pass
         print("ok mark_paid(pending) rejected")
 
-        # Accept: only the accused; registers without a vote.
+        # Accept: only the accused (Forbidden otherwise); registers without a vote.
         try:
             await accept(fid, amit)
             assert False
-        except DomainError:
+        except Forbidden:
             pass
         assert (await accept(fid, rohit)) is True
         f = await get_fine(fid)
         assert f.status == "confirmed" and f.resolution == "accepted"
+        # Bug 2: acceptance registers an OWED obligation with a pay-by — it does NOT settle.
+        assert f.payment_status == "owed" and f.pay_by is not None and f.paid is False
         assert await pot() == 50
         assert (await accept(fid, rohit)) is False
-        print("ok accept -> registered (confirmed); pot=50")
+        print("ok accept -> registered (confirmed) + OWED (pay-by set, unpaid); pot=50")
+
+        # Bug 4 — only the ACCUSED may respond. The accuser and a neutral member are
+        # Forbidden from denying; the complaint stays pending until the accused acts.
+        fidp = await create(accused_id=rohit, added_by=amit, rule_id=rule, proofs=PROOF)
+        for actor in (amit, priya):  # accuser, then a neutral third party
+            try:
+                await dispute(fidp, actor)
+                assert False
+            except Forbidden:
+                pass
+        assert (await get_fine(fidp)).status == "pending"  # nobody but the accused moved it
+        assert (await dispute(fidp, rohit)) is True          # the accused can deny
+        assert (await get_fine(fidp)).status == "disputed"
+        print("ok Bug4: only the accused can deny (accuser + neutral Forbidden)")
 
         # Deny -> vote (Priya eligible) -> uphold finalizes.
         fid2 = await create(accused_id=rohit, added_by=amit, rule_id=rule, proofs=PROOF)
@@ -242,15 +268,17 @@ async def main() -> None:
         assert await sweep_due() == [fid6]
         f6 = await get_fine(fid6)
         assert f6.status == "confirmed" and f6.resolution == "auto_confirmed"
+        assert f6.payment_status == "owed" and f6.pay_by is not None  # Bug 2: auto-confirm registers a debt
         assert "auto_confirmed" in await event_types(fid6)
-        print("ok cooling sweep auto-confirms (resolution=auto_confirmed)")
+        print("ok cooling sweep auto-confirms (resolution=auto_confirmed) + OWED")
 
-        # mark_paid flips once, double-tap no-ops.
+        # mark_paid flips once, double-tap no-ops; OWED -> SETTLED.
         assert (await mark_paid(fid6)) is True
         assert (await mark_paid(fid6)) is False
-        assert (await get_fine(fid6)).paid is True
+        f6 = await get_fine(fid6)
+        assert f6.paid is True and f6.payment_status == "settled" and f6.paid_at is not None
         assert fid6 not in await unpaid_ids(rohit)
-        print("ok mark_paid True then False; fine drops out of dues")
+        print("ok mark_paid True then False; OWED -> SETTLED; fine drops out of dues")
 
         # Inactive accused/accuser rejected.
         ex = await add_member("ExTenant")
@@ -273,6 +301,57 @@ async def main() -> None:
         except DomainError:
             pass
         print("ok ad-hoc complaint; neither-rule-nor-amount rejected")
+
+        # Bug 1 — each fine settles INDEPENDENTLY. Two owed fines on Rohit; paying only
+        # the second must charge exactly ₹100, never the ₹150 total.
+        fa = await create(accused_id=rohit, added_by=amit, rule_id=rule, proofs=PROOF)  # ₹50
+        fb = await create(accused_id=rohit, added_by=priya, amount=100, proofs=PROOF)    # ₹100
+        assert await accept(fa, rohit) and await accept(fb, rohit)                       # both registered
+        res = await mark_fines_paid(rohit, [fb])                                         # pay only the second
+        assert res == {"paid": [fb], "count": 1, "totalPaid": 100}
+        unpaid = await unpaid_ids(rohit)
+        assert fb not in unpaid and fa in unpaid  # only fb settled; fa still owed
+        print("ok Bug1: paying one of two fines charges ₹100 (that fine only), not ₹150")
+
+        # owed_fines_for validation: not-your-fine and not-payable are both rejected.
+        fc = await create(accused_id=amit, added_by=rohit, rule_id=rule, proofs=PROOF)   # Amit's fine
+        try:
+            await mark_fines_paid(rohit, [fc]); assert False
+        except NotFound:
+            pass
+        fd = await create(accused_id=rohit, added_by=amit, amount=30, proofs=PROOF)      # pending (not registered)
+        try:
+            await mark_fines_paid(rohit, [fd]); assert False
+        except DomainError:
+            pass
+        print("ok Bug1: paying another's fine -> 404; paying an unregistered fine -> 400")
+
+        # Bug 2 — the payment state machine end to end.
+        fe = await create(accused_id=rohit, added_by=amit, amount=70, proofs=PROOF)
+        try:
+            await mark_paid(fe); assert False           # not registered yet -> not payable
+        except DomainError:
+            pass
+        await accept(fe, rohit)
+        f = await get_fine(fe)
+        assert f.payment_status == "owed" and f.paid is False and f.paid_at is None
+        assert (await mark_paid(fe)) is True
+        f = await get_fine(fe)
+        assert f.payment_status == "settled" and f.paid is True and f.paid_at is not None
+        assert (await mark_paid(fe)) is False           # already settled
+        assert {"payment_due", "paid"} <= set(await event_types(fe))
+        print("ok Bug2: NOT_OWED->(register)->OWED->(pay)->SETTLED; events logged")
+
+        # Bug 2 — OWED past its pay-by goes OVERDUE via the sweep, and is still payable.
+        fg = await create(accused_id=rohit, added_by=amit, amount=90, proofs=PROOF)
+        await accept(fg, rohit)
+        await set_field(fg, pay_by=_past())
+        assert fg in await sweep_overdue()
+        assert (await get_fine(fg)).payment_status == "overdue"
+        assert "overdue" in await event_types(fg)
+        assert (await mark_paid(fg)) is True
+        assert (await get_fine(fg)).payment_status == "settled"
+        print("ok Bug2: OWED past pay-by -> OVERDUE (sweep); overdue still pays -> SETTLED")
 
         print("\nFINES/COMPLAINT SMOKE: ALL CHECKS PASSED")
     finally:

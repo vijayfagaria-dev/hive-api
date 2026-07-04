@@ -45,7 +45,7 @@ async def unread_count(session: AsyncSession, member_id: int) -> int:
         select(func.count())
         .select_from(Notification)
         .where(Notification.member_id == member_id, Notification.read.is_(False))
-    )
+    ) or 0
 
 
 async def mark_read(session: AsyncSession, member_id: int, notif_id: int) -> bool:

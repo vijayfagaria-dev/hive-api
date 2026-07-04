@@ -118,25 +118,17 @@ async def mark_share_paid(session: AsyncSession, bill_id: int, member_id: int) -
         share.paid = True
 
 
-async def list_unpaid_shares(session: AsyncSession, member_id: int) -> Sequence[Row]:
-    stmt = (
-        select(
-            BillShare.id,
-            BillShare.bill_id,
-            BillShare.share_amount,
-            Bill.type,
-            Bill.month,
-        )
-        .join(Bill, Bill.id == BillShare.bill_id)
-        .where(BillShare.member_id == member_id, BillShare.paid.is_(False))
-        .order_by(Bill.month, Bill.type)
-    )
-    return (await session.execute(stmt)).all()
-
-
 async def bills_owed_by(session: AsyncSession, member_id: int) -> int:
+    # Sum only shares of CONFIRMED bills (mirrors fines' OWED_STATUSES). Without the
+    # status filter, dues/balances overstated debt during the cooling window and forever
+    # for a bill that was disputed and never confirmed.
     return await session.scalar(
-        select(func.coalesce(func.sum(BillShare.share_amount), 0)).where(
-            BillShare.member_id == member_id, BillShare.paid.is_(False)
+        select(func.coalesce(func.sum(BillShare.share_amount), 0))
+        .select_from(BillShare)
+        .join(Bill, Bill.id == BillShare.bill_id)
+        .where(
+            BillShare.member_id == member_id,
+            BillShare.paid.is_(False),
+            Bill.status == BillStatus.CONFIRMED,
         )
     )

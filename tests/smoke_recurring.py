@@ -17,6 +17,7 @@ from app.db.session import create_all, dispose, session_scope  # noqa: E402
 from app.domain.time import now_iso  # noqa: E402
 from app.repositories import expenses as expenses_repo  # noqa: E402
 from app.repositories import members as members_repo  # noqa: E402
+from app.repositories import notifications as notifications_repo  # noqa: E402
 from app.services import balances, recurring  # noqa: E402
 
 
@@ -68,6 +69,30 @@ async def main():
         async with session_scope() as s:
             assert await expenses_repo.recurring_generated(s, rid, month) is True
         print("ok recurring sweep: idempotent — no duplicate for the same month")
+
+        # --- a template whose split becomes invalid PAUSES loudly (not silently skipped) ---
+        async with session_scope() as s:
+            tid2 = await recurring.create_template(
+                s, actor=a, name="Cleaner", category="cleaner", amount=1000,
+                default_payer_id=a.id, strategy="percentage",
+                params={"pct": {a.id: 25, b.id: 25, c.id: 25, d.id: 25}}, participant_ids=pids,
+            )
+            rid2 = await recurring.create_recurring(s, actor=a, template_id=tid2, day_of_month=6)
+        # config drift: the percentages now total 90 (invalid) — generation will fail
+        async with session_scope() as s:
+            t = await expenses_repo.get_template(s, tid2)
+            t.split_params = {"pct": {a.id: 25, b.id: 25, c.id: 20, d.id: 20}}
+        async with session_scope() as s:
+            made2 = await recurring.sweep_due(s)
+        assert made2 == []  # broken one didn't generate; the internet one is already done this month
+        async with session_scope() as s:
+            status = {r.id: r.status for r in await expenses_repo.list_recurring(s)}
+        assert status[rid2] == "paused"   # broken recurring paused (no retry-spam every sweep)
+        assert status[rid] == "active"    # the healthy one is untouched
+        async with session_scope() as s:
+            kinds = [n.kind for n in await notifications_repo.list_for(s, a.id)]
+        assert "recurring_failed" in kinds  # the flat was notified loudly, not silently skipped
+        print("ok recurring: a broken template pauses + notifies (never silently swallowed)")
 
         print("\nRECURRING SMOKE: ALL CHECKS PASSED")
     finally:

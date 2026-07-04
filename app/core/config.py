@@ -60,6 +60,10 @@ class Settings:
     # How often the background sweep auto-confirms overdue complaints AND finalizes
     # votes whose window has closed.
     sweep_interval_seconds: int = _int("SWEEP_INTERVAL_SECONDS", 300)
+    # How often the notification-outbox dispatcher drains queued push/email/WhatsApp
+    # sends. Kept short (independent of the slower sweep) so push feels near-real-time,
+    # while network I/O stays out of request transactions.
+    notify_dispatch_seconds: int = _int("NOTIFY_DISPATCH_SECONDS", 10)
 
     # --- Notifications: Web Push (VAPID) + email, on top of the in-app feed ---
     vapid_public_key: str = os.getenv("VAPID_PUBLIC_KEY", "").strip()
@@ -80,6 +84,17 @@ class Settings:
     whatsapp_lang: str = os.getenv("WHATSAPP_TEMPLATE_LANG", "en").strip()
     whatsapp_api_version: str = os.getenv("WHATSAPP_API_VERSION", "v21.0").strip()
 
+    # Native mobile push via Firebase Cloud Messaging (HTTP v1) — covers Android natively
+    # and iOS via APNS-through-FCM. Inert until a native/PWA app registers device tokens
+    # AND creds are set (a project id + a bearer access token; production mints the token
+    # from a service account). Empty -> the FCM channel is skipped, like WhatsApp.
+    fcm_project_id: str = os.getenv("FCM_PROJECT_ID", "").strip()
+    # Preferred for production: a service-account JSON path — the app mints (and refreshes)
+    # short-lived OAuth tokens itself (needs `google-auth`). FCM_ACCESS_TOKEN is a simpler
+    # pre-minted token for quick testing (expires ~hourly).
+    fcm_credentials_file: str = os.getenv("FCM_CREDENTIALS_FILE", "").strip()
+    fcm_access_token: str = os.getenv("FCM_ACCESS_TOKEN", "").strip()
+
     # --- Rule proposals (community vote to change the rule book) ---
     # Voting window for a submitted proposal.
     proposal_voting_hours: int = _int("PROPOSAL_VOTING_HOURS", 72)
@@ -98,6 +113,13 @@ class Settings:
 
     # --- Complaint workflow (proof + accept/deny + voting) ---
     vote_window_hours: int = _int("VOTE_WINDOW_HOURS", 24)
+    # After a fine is REGISTERED (accepted / auto-confirmed / upheld) the accused has this
+    # many hours to pay before it goes OVERDUE. Acceptance only creates the obligation —
+    # it never settles (Bug 2). Separate from the pre-registration cooling window.
+    payment_window_hours: int = _int("PAYMENT_WINDOW_HOURS", 72)
+    # If true, "marked paid" awaits an explicit verification before it counts as SETTLED;
+    # if false (default), self-attested payment settles immediately (today's one-tap flow).
+    payment_verification: bool = os.getenv("PAYMENT_VERIFICATION", "").strip().lower() in ("1", "true", "yes")
     proof_storage_dir: str = os.getenv("PROOF_STORAGE_DIR", "proofs").strip()
     max_proof_bytes: int = _int("MAX_PROOF_BYTES", 8 * 1024 * 1024)
     max_complaints_per_day: int = _int("MAX_COMPLAINTS_PER_DAY", 8)
@@ -152,6 +174,10 @@ class Settings:
     @property
     def whatsapp_enabled(self) -> bool:
         return bool(self.whatsapp_token and self.whatsapp_phone_id)
+
+    @property
+    def fcm_enabled(self) -> bool:
+        return bool(self.fcm_project_id and (self.fcm_credentials_file or self.fcm_access_token))
 
     @property
     def upi_enabled(self) -> bool:

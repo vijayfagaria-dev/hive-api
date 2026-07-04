@@ -85,7 +85,8 @@ async def list_splits(session: AsyncSession, expense_id: int) -> Sequence[Row]:
 
 
 async def list_expenses(
-    session: AsyncSession, *, month: Optional[str] = None, category: Optional[str] = None, limit: int = 60
+    session: AsyncSession, *, month: Optional[str] = None, category: Optional[str] = None,
+    limit: int = 60, include_void: bool = False,
 ) -> Sequence[Row]:
     payer = aliased(Member)
     stmt = (
@@ -98,6 +99,8 @@ async def list_expenses(
         .order_by(Expense.incurred_on.desc(), Expense.id.desc())
         .limit(limit)
     )
+    if not include_void:
+        stmt = stmt.where(_LIVE)  # a deleted expense is out of balances -> keep it out of the feed too
     if month:
         stmt = stmt.where(Expense.month == month)
     if category:
@@ -137,6 +140,23 @@ async def insert_payment(
     session.add(p)
     await session.flush()
     return p
+
+
+async def find_recent_payment_duplicate(
+    session: AsyncSession, *, from_id: int, to_id: Optional[int], amount: int, method: str,
+    note: Optional[str], since_iso: str,
+) -> bool:
+    """A same-(from,to,amount,method,note) payment recorded since `since_iso` — used to
+    reject accidental double-submits (there's no natural idempotency key on a transfer)."""
+    stmt = select(func.count()).select_from(Payment).where(
+        Payment.from_id == from_id,
+        Payment.to_id.is_(None) if to_id is None else Payment.to_id == to_id,
+        Payment.amount == amount,
+        Payment.method == method,
+        Payment.note.is_(None) if note is None else Payment.note == note,
+        Payment.created_at >= since_iso,
+    )
+    return bool(await session.scalar(stmt))
 
 
 # --- rent (landlord-facing; purpose='rent', to_id NULL, excluded from balances) ---

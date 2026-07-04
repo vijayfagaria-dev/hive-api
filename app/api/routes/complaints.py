@@ -85,8 +85,9 @@ async def dispute_complaint(
     fine = await fines_repo.get(session, fine_id)
     if fine is None:
         raise NotFound("No such complaint.")
-    if fine.added_by == member.id:
-        raise Forbidden("You filed this complaint — you can't dispute it.")
+    # Only the accused may deny (defense-in-depth: the service enforces this too).
+    if fine.member_id != member.id:
+        raise Forbidden("Only the accused can deny this complaint.")
     moved = await complaints.dispute(session, fine_id, by_member=member.id, reason=body.reason)
     return {"ok": True, "votingOpened": moved}
 

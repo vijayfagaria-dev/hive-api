@@ -17,14 +17,14 @@ from app.db.models.invitation import Invitation
 from app.db.models.ledger import LedgerEntry, Settlement
 from app.db.models.member import Member
 from app.db.models.member_event import MemberEvent
-from app.db.models.notification import Notification
+from app.db.models.notification import Notification, NotificationOutbox
 from app.db.models.proposal import (
     ProposalComment,
     ProposalEvent,
     ProposalVote,
     RuleProposal,
 )
-from app.db.models.push import PushSubscription
+from app.db.models.push import Device, PushSubscription
 from app.db.models.rule import Rule
 from app.db.models.rule_version import RuleVersion
 
@@ -52,7 +52,9 @@ __all__ = [
     "LedgerEntry",
     "Settlement",
     "Notification",
+    "NotificationOutbox",
     "PushSubscription",
+    "Device",
     "RuleProposal",
     "ProposalVote",
     "ProposalComment",

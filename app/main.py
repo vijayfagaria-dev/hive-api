@@ -22,7 +22,7 @@ from app.core.errors import install_exception_handlers
 from app.core.logging import configure_logging
 from app.db import session as db
 from app.db.seed import seed_if_empty
-from app.services import billing, complaints, proposals, recurring
+from app.services import billing, complaints, notifications, proposals, recurring
 
 logger = logging.getLogger("hive")
 
@@ -36,6 +36,7 @@ async def _sweep_loop() -> None:
             async with db.session_scope() as session:
                 promoted = await complaints.sweep_due(session)
                 finalized = await complaints.sweep_votes(session)
+                overdue = await complaints.sweep_overdue(session)
                 closed = await proposals.sweep_due(session)
                 bills_confirmed = await billing.sweep_due(session)
                 recurring_made = await recurring.sweep_due(session)
@@ -43,6 +44,8 @@ async def _sweep_loop() -> None:
                 logger.info("Sweep confirmed %d complaint(s): %s", len(promoted), promoted)
             if finalized:
                 logger.info("Sweep finalized %d complaint vote(s): %s", len(finalized), finalized)
+            if overdue:
+                logger.info("Sweep marked %d fine(s) overdue: %s", len(overdue), overdue)
             if closed:
                 logger.info("Sweep closed %d proposal(s): %s", len(closed), closed)
             if bills_confirmed:
@@ -54,6 +57,22 @@ async def _sweep_loop() -> None:
         except Exception:
             logger.exception("Complaint sweep failed")
         await asyncio.sleep(settings.sweep_interval_seconds)
+
+
+async def _notify_dispatch_loop() -> None:
+    """On a short interval: drain the notification outbox (push/email/WhatsApp) in its
+    own sessions, so external sends never run inside a request's DB transaction. One bad
+    pass never kills the loop."""
+    while True:
+        try:
+            sent = await notifications.dispatch_outbox()
+            if sent:
+                logger.info("Dispatched %d queued notification(s)", sent)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Notification dispatch failed")
+        await asyncio.sleep(settings.notify_dispatch_seconds)
 
 
 @asynccontextmanager
@@ -70,15 +89,17 @@ async def lifespan(app: FastAPI):
         )
     if not settings.push_enabled:
         logger.info("Web Push disabled (no VAPID keys) - notifications go in-app + email/WhatsApp.")
-    sweep = asyncio.create_task(_sweep_loop())
+    tasks = [asyncio.create_task(_sweep_loop()), asyncio.create_task(_notify_dispatch_loop())]
     try:
         yield
     finally:
-        sweep.cancel()
-        try:
-            await sweep
-        except asyncio.CancelledError:
-            pass
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         await db.dispose()
 
 

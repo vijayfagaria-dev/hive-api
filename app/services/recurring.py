@@ -9,17 +9,26 @@ editable draft for the one-tap "Generate July Rent" flow.
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFound, Unprocessable
-from app.domain.enums import ExpenseCategory, ExpenseEventType, ExpenseStatus, SplitStrategy
+from app.domain.enums import (
+    ExpenseCategory,
+    ExpenseEventType,
+    ExpenseStatus,
+    RecurringStatus,
+    SplitStrategy,
+)
 from app.domain.splits import compute_splits
 from app.domain.time import now_iso
 from app.repositories import expenses as expenses_repo
 from app.repositories import members as members_repo
 from app.services import notifications
+
+logger = logging.getLogger("hive.recurring")
 
 _CATEGORIES = {c.value for c in ExpenseCategory}
 _STRATEGIES = {s.value for s in SplitStrategy}
@@ -82,7 +91,17 @@ async def sweep_due(session: AsyncSession) -> list[int]:
             continue
         try:
             owed = compute_splits(t.split_strategy, t.amount, parts, t.split_params)
-        except Exception:
+        except Exception as exc:
+            # Never silently skip a broken template (e.g. splits no longer total 100% after a
+            # member left). Pause it (so we don't retry-spam every sweep), log loudly, and
+            # notify the flat once — a human fixes the template and re-activates it.
+            logger.exception("Recurring %s (%s) failed to generate for %s", rec.id, t.name, month)
+            rec.status = RecurringStatus.PAUSED
+            recipients = await members_repo.list_active_tenants(session)
+            if recipients:
+                await notifications.recurring_failed(
+                    session, recipients=recipients, template_name=t.name, month=month, reason=str(exc),
+                )
             continue
         day = min(max(rec.day_of_month, 1), 28)
         exp = await expenses_repo.insert_expense(

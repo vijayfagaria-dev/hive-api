@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.core.errors import DomainError, NotFound
 from app.db.models import Member
 from app.domain.enums import BillEventType, BillStatus
-from app.domain.money import split_by_ratio
+from app.domain.money import rent_shares_set, split_by_ratio
 from app.domain.time import deadline_iso, now, now_iso
 from app.repositories import bills as bills_repo
 from app.repositories import fines as fines_repo
@@ -25,7 +25,7 @@ def _bill_shares(bill_type: str, total: int, tenants: list[Member]) -> list[int]
     (house help, wifi, electricity, water) splits equally. Always sums to `total`."""
     if bill_type == "rent":
         pcts = [t.rent_share_pct or 0 for t in tenants]
-        if sum(pcts) != 100:
+        if not rent_shares_set(pcts):
             raise DomainError("Set rent shares (they must total 100%) before declaring the rent.")
         return split_by_ratio(total, pcts)
     return split_by_ratio(total, [1] * len(tenants))  # equal
@@ -112,6 +112,14 @@ async def sweep_due(session: AsyncSession) -> list[int]:
 
 
 async def mark_share_paid(session: AsyncSession, bill_id: int, member_id: int) -> None:
+    # A share is only payable once the bill is CONFIRMED — otherwise a pending/disputed
+    # bill's share could be flipped paid and vanish from dues though the bill never
+    # confirmed (and might yet be voided).
+    bill = await bills_repo.get_bill(session, bill_id)
+    if bill is None:
+        raise NotFound("No such bill.")
+    if bill.status != BillStatus.CONFIRMED:
+        raise DomainError("You can only pay a share of a confirmed bill.")
     await bills_repo.mark_share_paid(session, bill_id, member_id)
 
 

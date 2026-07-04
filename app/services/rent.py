@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import DomainError, Unprocessable
-from app.domain.money import split_by_ratio
+from app.domain.money import rent_ratio_weights, split_by_ratio
 from app.repositories import expenses as expenses_repo
 from app.repositories import members as members_repo
 from app.services import notifications
@@ -21,8 +21,7 @@ from app.services import notifications
 
 def _targets(tenants) -> list[int]:
     target = settings.monthly_rent
-    pcts = [t.rent_share_pct or 0 for t in tenants]
-    weights = pcts if sum(pcts) == 100 else [1] * len(tenants)
+    weights = rent_ratio_weights([t.rent_share_pct or 0 for t in tenants])
     return split_by_ratio(target, weights) if (target and tenants) else [0] * len(tenants)
 
 

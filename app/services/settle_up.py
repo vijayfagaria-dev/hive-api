@@ -13,6 +13,8 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import DomainError, NotFound
+from app.domain import permissions
+from app.domain.enums import Permission
 from app.domain.settle import simplify
 from app.repositories import expenses as expenses_repo
 from app.repositories import members as members_repo
@@ -20,17 +22,22 @@ from app.services import balances, notifications
 
 
 async def preview(session: AsyncSession) -> dict:
-    rows = await balances.all_balances(session)
-    names = {r["memberId"]: r["name"] for r in rows}
-    bmap = balances.balances_map(rows)
+    # Display the full nets, but SIMPLIFY over the peer-to-peer graph only — that
+    # component is provably zero-sum, so simplify()'s precondition always holds (no more
+    # HTTP 500 when there are outstanding fines / ledger advances / house payments; those
+    # aren't member↔member and are settled elsewhere).
+    display = await balances.all_balances(session)
+    names = {r["memberId"]: r["name"] for r in display}
+    peer = balances.balances_map(await balances.settle_balances(session))
     transfers = [
         {"fromId": f, "fromName": names.get(f), "toId": t, "toName": names.get(t), "amount": a}
-        for f, t, a in (simplify(bmap) if bmap else [])
+        for f, t, a in (simplify(peer) if peer else [])
     ]
-    return {"transfers": transfers, "balances": rows}
+    return {"transfers": transfers, "balances": display}
 
 
 async def close(session: AsyncSession, *, actor, note: Optional[str] = None) -> dict:
+    permissions.require(actor, Permission.SETTLE)
     p = await preview(session)
     if not p["transfers"]:
         raise DomainError("Everyone's already square — nothing to settle.")
@@ -49,6 +56,7 @@ async def close(session: AsyncSession, *, actor, note: Optional[str] = None) -> 
 
 async def mark_txn_paid(session: AsyncSession, *, actor, txn_id: int) -> dict:
     """Record that a proposed transfer actually happened — writes a Payment + closes the txn."""
+    permissions.require(actor, Permission.SETTLE)
     txn = await expenses_repo.get_settle_txn(session, txn_id)
     if txn is None:
         raise NotFound("No such transfer.")
@@ -61,3 +69,16 @@ async def mark_txn_paid(session: AsyncSession, *, actor, txn_id: int) -> dict:
     txn.status = "paid"
     txn.payment_id = pay.id
     return {"ok": True, "paymentId": pay.id}
+
+
+async def cancel_txn(session: AsyncSession, *, actor, txn_id: int) -> dict:
+    """Cancel a still-proposed transfer — e.g. the debt was cleared directly via /payments,
+    so this line would otherwise sit 'proposed' forever. No Payment is written."""
+    permissions.require(actor, Permission.SETTLE)
+    txn = await expenses_repo.get_settle_txn(session, txn_id)
+    if txn is None:
+        raise NotFound("No such transfer.")
+    if txn.status != "proposed":
+        raise DomainError("Only a proposed transfer can be cancelled.")
+    txn.status = "cancelled"
+    return {"ok": True}

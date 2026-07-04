@@ -143,7 +143,7 @@ class Payment(Base):
     purpose: Mapped[str] = mapped_column(String, nullable=False, default="settle")
     month: Mapped[Optional[str]] = mapped_column(String)  # 'YYYY-MM' for rent, else NULL
     note: Mapped[Optional[str]] = mapped_column(String)
-    settle_run_id: Mapped[Optional[int]] = mapped_column(Integer)  # set by a settle-up run (soft link)
+    settle_run_id: Mapped[Optional[int]] = mapped_column(ForeignKey("settle_runs.id"))  # the settle-up run that recorded it
     created_by: Mapped[Optional[int]] = mapped_column(ForeignKey("members.id"))
     created_at: Mapped[str] = mapped_column(String, nullable=False, default=now_iso)
 
@@ -183,7 +183,7 @@ class SettleTxn(Base):
     to_id: Mapped[int] = mapped_column(ForeignKey("members.id"), nullable=False)
     amount: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="proposed")
-    payment_id: Mapped[Optional[int]] = mapped_column(Integer)  # soft link to the payment that cleared it
+    payment_id: Mapped[Optional[int]] = mapped_column(ForeignKey("payments.id"))  # the payment that cleared it
     created_at: Mapped[str] = mapped_column(String, nullable=False, default=now_iso)
 
     __table_args__ = (

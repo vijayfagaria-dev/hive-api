@@ -10,7 +10,7 @@ from app.core.errors import Unprocessable
 from app.db.models import LedgerEntry, Member
 from app.domain import permissions
 from app.domain.enums import LedgerEntryType, Permission
-from app.domain.money import split_by_ratio
+from app.domain.money import rent_shares_set, split_by_ratio
 from app.repositories import ledger as ledger_repo
 from app.repositories import members as members_repo
 
@@ -33,7 +33,7 @@ async def add_charge(
         raise Unprocessable("No active tenants to charge.")
     if split == "ratio":
         weights = [t.rent_share_pct or 0 for t in tenants]
-        if sum(weights) != 100:
+        if not rent_shares_set(weights):
             raise Unprocessable("Set rent shares (total 100%) before a ratio split.")
     else:
         weights = [1] * len(tenants)

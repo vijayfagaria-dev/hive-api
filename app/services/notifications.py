@@ -24,7 +24,11 @@ from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.db.models import Member
+from app.domain.time import deadline_iso, now, now_iso
+from app.repositories import devices as devices_repo
+from app.repositories import members as members_repo
 from app.repositories import notifications as notifications_repo
+from app.repositories import outbox as outbox_repo
 from app.repositories import push as push_repo
 
 logger = logging.getLogger("hive.notify")
@@ -63,7 +67,10 @@ async def notify_member(
     proposal_id: Optional[int] = None,
     bill_id: Optional[int] = None,
 ) -> None:
-    """Record an in-app notification, then push + email + WhatsApp best-effort."""
+    """Record the in-app notification (the reliable backbone) and enqueue an outbox row
+    for out-of-band delivery — both in the caller's transaction. No network I/O happens
+    here; the background dispatcher (main._notify_dispatch_loop) sends push/email/WhatsApp
+    in its own session, so a slow send never holds the request's SQLite write lock."""
     await notifications_repo.insert(
         session, member_id=member.id, kind=kind, title=title, body=body,
         fine_id=fine_id, proposal_id=proposal_id, bill_id=bill_id,
@@ -75,9 +82,9 @@ async def notify_member(
         else f"bill-{bill_id}" if bill_id
         else None
     )
-    await _push_web(session, member, title=title, body=body, url=url, tag_id=tag_id)
-    await _send_email(member, subject=title, body=body, url=url)
-    await _send_whatsapp(member, title=title, body=body, url=url)
+    await outbox_repo.enqueue(
+        session, member_id=member.id, kind=kind, title=title, body=body, url=url, tag=tag_id,
+    )
 
 
 async def notify_members(
@@ -98,28 +105,7 @@ async def notify_members(
         )
 
 
-# --- Web Push channel ------------------------------------------------------
-
-async def _push_web(session, member: Member, *, title, body, url, tag_id=None) -> None:
-    if not settings.push_enabled:
-        return
-    subs = await push_repo.list_for(session, member.id)
-    if not subs:
-        return
-    payload = json.dumps(
-        {"title": title, "body": body or "", "url": url, "tag": tag_id or "hive"}
-    )
-    for sub in subs:
-        try:
-            await run_in_threadpool(_send_webpush_sync, sub.endpoint, sub.p256dh, sub.auth, payload)
-        except Exception as exc:  # WebPushException among others
-            status = getattr(getattr(exc, "response", None), "status_code", None)
-            if status in (404, 410):
-                await push_repo.delete_by_endpoint(session, sub.endpoint)
-                logger.info("Pruned dead push subscription for member %s", member.id)
-            else:
-                logger.warning("Web Push to member %s failed (non-fatal)", member.id, exc_info=True)
-
+# --- Channel senders (network; called by the dispatcher, never in a request txn) ---
 
 def _send_webpush_sync(endpoint: str, p256dh: str, auth: str, payload: str) -> None:
     from pywebpush import webpush  # lazy: module loads even without the lib
@@ -130,20 +116,6 @@ def _send_webpush_sync(endpoint: str, p256dh: str, auth: str, payload: str) -> N
         vapid_private_key=settings.vapid_private_key,
         vapid_claims={"sub": settings.vapid_subject},
     )
-
-
-# --- Email channel ---------------------------------------------------------
-
-async def _send_email(member: Member, *, subject, body, url) -> None:
-    if not settings.email_enabled or not member.email:
-        return
-    text = body or ""
-    if url:
-        text = f"{text}\n\nOpen it: {url}"
-    try:
-        await run_in_threadpool(_send_email_sync, member.email, subject, text)
-    except Exception:
-        logger.warning("Email to %s failed (non-fatal)", member.email, exc_info=True)
 
 
 def _send_email_sync(to_addr: str, subject: str, text: str) -> None:
@@ -173,15 +145,6 @@ def _wa_param(title: str, body: Optional[str], url: Optional[str]) -> str:
     return " ".join(raw.split())[:1000]
 
 
-async def _send_whatsapp(member: Member, *, title, body, url) -> None:
-    if not settings.whatsapp_enabled or not member.whatsapp:
-        return
-    try:
-        await _send_whatsapp_request(member.whatsapp, _wa_param(title, body, url))
-    except Exception:
-        logger.warning("WhatsApp to member %s failed (non-fatal)", member.id, exc_info=True)
-
-
 async def _send_whatsapp_request(to: str, text: str) -> None:
     import httpx  # async; already a dependency
 
@@ -203,6 +166,221 @@ async def _send_whatsapp_request(to: str, text: str) -> None:
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.post(endpoint, json=payload, headers=headers)
         resp.raise_for_status()
+
+
+# --- Channel registry (pluggable providers — add one by appending to CHANNELS) ---
+
+class _FcmTokenGone(Exception):
+    """FCM reported the token is unregistered/invalid — prune it."""
+
+
+_FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
+_fcm_credentials = None  # cached google.auth service-account credentials
+
+
+def _fcm_bearer() -> str:
+    """A valid FCM OAuth bearer token. Prefers a service-account file (self-refreshing via
+    google-auth); falls back to a pre-minted FCM_ACCESS_TOKEN for quick testing. Sync
+    (does network on refresh) — call from a threadpool."""
+    if settings.fcm_credentials_file:
+        from google.auth.transport.requests import Request  # lazy: only when FCM is on
+        from google.oauth2 import service_account
+
+        global _fcm_credentials
+        if _fcm_credentials is None:
+            _fcm_credentials = service_account.Credentials.from_service_account_file(
+                settings.fcm_credentials_file, scopes=[_FCM_SCOPE]
+            )
+        if not _fcm_credentials.valid:
+            _fcm_credentials.refresh(Request())
+        return _fcm_credentials.token
+    return settings.fcm_access_token
+
+
+async def _send_fcm(token: str, job: dict) -> None:
+    """Deliver one message via FCM HTTP v1 — covers native Android + iOS-via-APNS. Inert
+    unless FCM is configured (config.fcm_*); FCM message delivery itself has no cost."""
+    import httpx
+
+    bearer = await run_in_threadpool(_fcm_bearer)
+    endpoint = f"https://fcm.googleapis.com/v1/projects/{settings.fcm_project_id}/messages:send"
+    message = {
+        "message": {
+            "token": token,
+            "notification": {"title": job["title"], "body": job["body"] or ""},
+            "data": {"url": job["url"] or "", "tag": job["tag"] or "hive"},
+        }
+    }
+    headers = {"Authorization": f"Bearer {bearer}"}
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.post(endpoint, json=message, headers=headers)
+        if resp.status_code in (403, 404):  # UNREGISTERED / invalid token
+            raise _FcmTokenGone(token)
+        resp.raise_for_status()
+
+
+class Channel:
+    """A delivery provider. `enabled()` gates it on config; `send(job)` delivers and
+    returns dead push targets to prune, as (provider, token) pairs."""
+
+    name = "base"
+
+    def enabled(self) -> bool:
+        return False
+
+    async def send(self, job: dict) -> list[tuple[str, str]]:
+        return []
+
+
+class WebPushChannel(Channel):
+    name = "webpush"
+
+    def enabled(self) -> bool:
+        return settings.push_enabled
+
+    async def send(self, job: dict) -> list[tuple[str, str]]:
+        dead: list[tuple[str, str]] = []
+        if not job["webpush"]:
+            return dead
+        payload = json.dumps(
+            {"title": job["title"], "body": job["body"] or "", "url": job["url"], "tag": job["tag"] or "hive"}
+        )
+        for endpoint, p256dh, auth in job["webpush"]:
+            try:
+                await run_in_threadpool(_send_webpush_sync, endpoint, p256dh, auth, payload)
+            except Exception as exc:  # WebPushException among others
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                if status in (404, 410):
+                    dead.append(("webpush", endpoint))
+                else:
+                    logger.warning("Web Push to member %s failed (non-fatal)", job["member_id"], exc_info=True)
+        return dead
+
+
+class FcmChannel(Channel):
+    name = "fcm"
+
+    def enabled(self) -> bool:
+        return settings.fcm_enabled
+
+    async def send(self, job: dict) -> list[tuple[str, str]]:
+        dead: list[tuple[str, str]] = []
+        for token in job["fcm"]:
+            try:
+                await _send_fcm(token, job)
+            except _FcmTokenGone:
+                dead.append(("fcm", token))
+            except Exception:
+                logger.warning("FCM to member %s failed (non-fatal)", job["member_id"], exc_info=True)
+        return dead
+
+
+class EmailChannel(Channel):
+    name = "email"
+
+    def enabled(self) -> bool:
+        return settings.email_enabled
+
+    async def send(self, job: dict) -> list[tuple[str, str]]:
+        if not job["email"]:
+            return []
+        text = job["body"] or ""
+        if job["url"]:
+            text = f"{text}\n\nOpen it: {job['url']}"
+        try:
+            await run_in_threadpool(_send_email_sync, job["email"], job["title"], text)
+        except Exception:
+            logger.warning("Email to %s failed (non-fatal)", job["email"], exc_info=True)
+        return []
+
+
+class WhatsAppChannel(Channel):
+    name = "whatsapp"
+
+    def enabled(self) -> bool:
+        return settings.whatsapp_enabled
+
+    async def send(self, job: dict) -> list[tuple[str, str]]:
+        if not job["whatsapp"]:
+            return []
+        try:
+            await _send_whatsapp_request(job["whatsapp"], _wa_param(job["title"], job["body"], job["url"]))
+        except Exception:
+            logger.warning("WhatsApp to member %s failed (non-fatal)", job["member_id"], exc_info=True)
+        return []
+
+
+# The pluggable provider set — add a channel by appending here; nothing else changes.
+CHANNELS: list[Channel] = [WebPushChannel(), FcmChannel(), EmailChannel(), WhatsAppChannel()]
+
+
+# --- Outbox dispatcher (drains the queue in the background sweep) -----------
+
+async def _deliver_job(job: dict) -> list[tuple[str, str]]:
+    """Best-effort delivery across every enabled channel. Runs with NO database session
+    open — network I/O stays out of the write lock. Returns dead push targets to prune,
+    as (provider, token) pairs."""
+    dead: list[tuple[str, str]] = []
+    for channel in CHANNELS:
+        if channel.enabled():
+            try:
+                dead.extend(await channel.send(job))
+            except Exception:
+                logger.warning("Notification channel %s failed (non-fatal)", channel.name, exc_info=True)
+    return dead
+
+
+async def dispatch_outbox(limit: int = 25) -> int:
+    """Drain a batch of the notification outbox. Three short phases keep network I/O
+    strictly outside the DB transaction: (A) claim + preload recipient targets in one
+    session, (B) send with no session open, (C) finalize statuses + prune dead devices in
+    one session. Returns how many jobs were processed. Called by the sweep loop."""
+    from app.db import session as db  # local import avoids any import-time coupling
+
+    # Phase A — claim due rows and preload every channel's targets.
+    async with db.session_scope() as s:
+        rows = await outbox_repo.claim_batch(s, now_iso(), limit)
+        jobs: list[dict] = []
+        for r in rows:
+            member = await members_repo.get(s, r.member_id)
+            webpush: list[tuple] = []
+            if settings.push_enabled:
+                webpush += [(x.endpoint, x.p256dh, x.auth) for x in await push_repo.list_for(s, r.member_id)]
+                webpush += [(d.token, d.p256dh, d.auth) for d in await devices_repo.list_for(s, r.member_id, "webpush")]
+            fcm = [d.token for d in await devices_repo.list_for(s, r.member_id, "fcm")] if settings.fcm_enabled else []
+            jobs.append({
+                "id": r.id, "kind": r.kind, "title": r.title, "body": r.body,
+                "url": r.url, "tag": r.tag, "member_id": r.member_id,
+                "email": getattr(member, "email", None),
+                "whatsapp": getattr(member, "whatsapp", None),
+                "webpush": webpush, "fcm": fcm,
+            })
+    if not jobs:
+        return 0
+
+    # Phase B — send (no DB session held).
+    outcomes: list[tuple[int, str, list[tuple[str, str]], str | None]] = []
+    for job in jobs:
+        try:
+            dead = await _deliver_job(job)
+            outcomes.append((job["id"], "sent", dead, None))
+        except Exception as exc:  # a whole-job failure -> retry with backoff
+            outcomes.append((job["id"], "retry", [], repr(exc)))
+
+    # Phase C — persist results + prune dead push targets (both new and legacy tables).
+    async with db.session_scope() as s:
+        for outbox_id, result, dead, err in outcomes:
+            if result == "sent":
+                await outbox_repo.mark_sent(s, outbox_id, now_iso())
+            else:
+                await outbox_repo.mark_retry(
+                    s, outbox_id, next_attempt_at=deadline_iso(now(), 1), error=err or "",
+                )
+            for provider, token in dead:
+                await devices_repo.delete_by_token(s, token)
+                if provider == "webpush":
+                    await push_repo.delete_by_endpoint(s, token)  # legacy table too
+    return len(jobs)
 
 
 # --- High-level complaint events (called by the complaints service) --------
@@ -379,6 +557,19 @@ async def expense_added(
         session, recipients, kind="expense_added",
         title=f"🧾 {payer_name} added a {category} expense — {rupees(amount)}",
         body="Open Expenses to see your share and settle up.",
+    )
+
+
+async def recurring_failed(
+    session: AsyncSession, *, recipients: Sequence[Member], template_name: str, month: str,
+    reason: Optional[str] = None,
+) -> None:
+    tail = f" ({reason[:120]})" if reason else ""
+    await notify_members(
+        session, recipients, kind="recurring_failed",
+        title=f"⚠️ Auto-expense paused — {template_name}",
+        body=(f"Couldn't auto-generate “{template_name}” for {month}{tail}. It's paused — "
+              f"fix the template (e.g. splits must total 100%) and re-activate it."),
     )
 
 
