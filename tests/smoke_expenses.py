@@ -42,7 +42,7 @@ async def main():
         # --- A pays ₹58,000 brokerage, ratio 27/27/27/19 ---
         async with session_scope() as s:
             eid = await expenses.create_expense(
-                s, actor=a, payer_id=a.id, amount=58000, category="brokerage", description="Move-in broker",
+                s, actor=a, payer_id=a.id, amount=58000, category="broker", description="Move-in broker",
                 strategy="ratio", params={"weights": {a.id: 27, b.id: 27, c.id: 27, d.id: 19}},
                 participant_ids=pids, incurred_on="2026-07-01",
             )
@@ -152,14 +152,14 @@ async def main():
         # --- edit recomputes splits + balances; delete drops it out entirely ---
         async with session_scope() as s:
             eid2 = await expenses.create_expense(
-                s, actor=a, payer_id=d.id, amount=400, category="gas", description="cylinder",
+                s, actor=a, payer_id=d.id, amount=400, category="maintenance", description="cylinder",
                 strategy="equal", params=None, participant_ids=[a.id, b.id, c.id, d.id], incurred_on="2026-07-05",
             )
         d_before = (await net(d.id))["net"]
         # edit: raise to ₹800, split among only A & D
         async with session_scope() as s:
             await expenses.edit_expense(
-                s, actor=a, expense_id=eid2, amount=800, category="gas", description="cylinder x2",
+                s, actor=a, expense_id=eid2, amount=800, category="maintenance", description="cylinder x2",
                 strategy="equal", params=None, participant_ids=[a.id, d.id],
             )
         async with session_scope() as s:

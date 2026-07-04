@@ -21,7 +21,7 @@ from app.db.models import (
     SettleRun,
     SettleTxn,
 )
-from app.domain.enums import ExpenseStatus
+from app.domain.enums import ExpenseCategory, ExpenseStatus
 from app.repositories import fits_i64
 
 _LIVE = Expense.status != ExpenseStatus.VOID  # every balance query excludes void expenses
@@ -159,21 +159,24 @@ async def find_recent_payment_duplicate(
     return bool(await session.scalar(stmt))
 
 
-# --- rent (landlord-facing; purpose='rent', to_id NULL, excluded from balances) ---
+# --- rent (a shared 'rent'-category expense: fronted by one tenant, split by rent-share,
+#     so it ALSO nets in the settle-up graph like any expense — see services/rent.py) ----
 
 async def rent_collected(session: AsyncSession, month: str) -> int:
+    """Total rent recorded for a month = the sum of its live rent-category expenses."""
     return await session.scalar(
-        select(func.coalesce(func.sum(Payment.amount), 0)).where(
-            Payment.purpose == "rent", Payment.month == month
+        select(func.coalesce(func.sum(Expense.amount), 0)).where(
+            Expense.category == ExpenseCategory.RENT, Expense.month == month, _LIVE
         )
     )
 
 
 async def rent_by_member(session: AsyncSession, month: str) -> dict[int, int]:
+    """Who fronted how much rent this month (payer_id -> total) — the progress board."""
     rows = await session.execute(
-        select(Payment.from_id, func.coalesce(func.sum(Payment.amount), 0))
-        .where(Payment.purpose == "rent", Payment.month == month)
-        .group_by(Payment.from_id)
+        select(Expense.payer_id, func.coalesce(func.sum(Expense.amount), 0))
+        .where(Expense.category == ExpenseCategory.RENT, Expense.month == month, _LIVE)
+        .group_by(Expense.payer_id)
     )
     return {mid: total for mid, total in rows.all()}
 

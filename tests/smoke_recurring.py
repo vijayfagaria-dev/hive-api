@@ -73,7 +73,7 @@ async def main():
         # --- a template whose split becomes invalid PAUSES loudly (not silently skipped) ---
         async with session_scope() as s:
             tid2 = await recurring.create_template(
-                s, actor=a, name="Cleaner", category="cleaner", amount=1000,
+                s, actor=a, name="Cleaner", category="maintenance", amount=1000,
                 default_payer_id=a.id, strategy="percentage",
                 params={"pct": {a.id: 25, b.id: 25, c.id: 25, d.id: 25}}, participant_ids=pids,
             )

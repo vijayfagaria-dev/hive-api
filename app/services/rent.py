@@ -1,10 +1,14 @@
-"""Rent — a landlord-facing monthly obligation (not a member↔member split).
+"""Rent — a shared monthly cost, fronted by one tenant and split by rent-share %.
 
-Each tenant's target contribution is their rent-share % of the configured monthly
-target (₹58,000); a rent payment is money paid to the house (`Payment` with
-`purpose='rent'`, `to_id=NULL`), so it's excluded from the member settle-up graph. The
-month's rent may be paid in several entries, but their total must never exceed the
-target — over-payment is rejected with the exact rupee delta.
+One tenant pays the landlord the whole month's rent; that is recorded as a shared
+`Expense` (category='rent', split by each tenant's rent-share %). So — exactly like
+groceries or wifi — the payer is credited the full amount and every other tenant owes
+their slice, and rent nets together with all other expenses into the single settle-up
+number ("send ₹X to Y and everyone's square").
+
+The monthly progress bar (`rent_status`) still shows target vs. what's been fronted; a
+month's fronted total must never exceed the ₹58,000 target (over-payment is rejected
+with the exact rupee delta). Rent may be fronted in several entries by different tenants.
 """
 
 from __future__ import annotations
@@ -13,10 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import DomainError, Unprocessable
+from app.domain.enums import ExpenseCategory, SplitStrategy
 from app.domain.money import rent_ratio_weights, split_by_ratio
 from app.repositories import expenses as expenses_repo
 from app.repositories import members as members_repo
-from app.services import notifications
+from app.services import expenses as expenses_svc
 
 
 def _targets(tenants) -> list[int]:
@@ -45,13 +50,17 @@ async def rent_status(session: AsyncSession, month: str) -> dict:
 
 
 async def record_rent_payment(session: AsyncSession, *, actor, member_id: int, amount: int, month: str) -> dict:
+    """One tenant fronts `amount` of the month's rent. Recorded as a shared rent expense
+    (split by rent-share %), so the fronter is credited and the others owe their slice —
+    it settles through the same peer graph as every other expense."""
     if amount <= 0:
         raise Unprocessable("Amount must be positive.")
     target = settings.monthly_rent
     if target <= 0:
         raise DomainError("Monthly rent isn't configured yet (set MONTHLY_RENT).")
-    if await members_repo.get(session, member_id) is None:
-        raise Unprocessable("No such member.")
+    tenants = await members_repo.list_active_tenants(session)
+    if not any(t.id == member_id for t in tenants):
+        raise Unprocessable("Rent must be fronted by an active tenant.")
     collected = await expenses_repo.rent_collected(session, month)
     if collected + amount > target:
         over = collected + amount - target
@@ -59,12 +68,14 @@ async def record_rent_payment(session: AsyncSession, *, actor, member_id: int, a
             f"That would push {month} rent to ₹{collected + amount:,} — ₹{over:,} over the ₹{target:,} target."
         )
 
-    await expenses_repo.insert_payment(
-        session, from_id=member_id, to_id=None, amount=amount, method="upi",
-        purpose="rent", month=month, note=f"Rent {month}", created_by=actor.id,
+    # Split the fronted amount across all active tenants by rent-share % (falls back to an
+    # even split when shares aren't configured — same rule the targets use).
+    weights = rent_ratio_weights([t.rent_share_pct or 0 for t in tenants])
+    params = {"weights": {t.id: w for t, w in zip(tenants, weights)}}
+    await expenses_svc.create_expense(
+        session, actor=actor, payer_id=member_id, amount=amount, category=ExpenseCategory.RENT,
+        description=f"Rent {month}", strategy=SplitStrategy.RATIO, params=params,
+        participant_ids=[t.id for t in tenants], incurred_on=f"{month}-01",
     )
     new_collected = collected + amount
-    if new_collected == target:
-        recipients = await members_repo.list_active_tenants(session)
-        await notifications.rent_completed(session, recipients=recipients, month=month, target=target)
     return {"ok": True, "collected": new_collected, "remaining": target - new_collected, "complete": new_collected == target}

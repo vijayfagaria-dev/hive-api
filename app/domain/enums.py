@@ -95,14 +95,13 @@ class BillEventType(StrEnum):
 # --- Expenses (the unified Splitwise-style money model) ---------------------
 
 class ExpenseCategory(StrEnum):
-    ELECTRICITY = "electricity"
-    WATER = "water"
-    HOUSE_HELP = "house_help"
+    RENT = "rent"                 # fronted by one tenant, split by rent-share % (see services/rent.py)
+    MAINTENANCE = "maintenance"   # water / electricity / gas / cleaner and other flat upkeep
     INTERNET = "internet"
-    GAS = "gas"
-    CLEANER = "cleaner"
+    HOUSE_HELP = "house_help"
+    COOK = "cook"
     GROCERIES = "groceries"
-    BROKERAGE = "brokerage"
+    BROKER = "broker"
     MISC = "misc"
 
 

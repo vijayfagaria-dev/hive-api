@@ -26,7 +26,7 @@ from app.db.base import Base
 from app.domain.enums import ExpenseStatus
 from app.domain.time import now_iso
 
-_CATEGORIES = "('electricity','water','house_help','internet','gas','cleaner','groceries','brokerage','misc')"
+_CATEGORIES = "('rent','maintenance','internet','house_help','cook','groceries','broker','misc')"
 _STRATEGIES = "('equal','ratio','percentage','shares','fixed','custom')"
 
 

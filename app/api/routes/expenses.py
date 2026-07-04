@@ -143,11 +143,11 @@ async def settle_txn_cancel(
     return await settle_up.cancel_txn(session, actor=member, txn_id=txn_id)
 
 
-# --- rent (landlord obligation; ₹target validated) -------------------------
+# --- rent (a shared expense fronted by one tenant; ₹target validated) ------
 
 @router.get("/rent/{month}")
 async def rent_status(month: str, session: AsyncSession = Depends(get_session), member=Depends(require_login)):
-    """Rent progress for a month: target, collected, remaining, per-tenant contributions."""
+    """Rent progress for a month: target, collected, remaining, who's fronted what."""
     return await rent.rent_status(session, month)
 
 
@@ -155,7 +155,8 @@ async def rent_status(month: str, session: AsyncSession = Depends(get_session), 
 async def record_rent(
     body: RentBody, session: AsyncSession = Depends(get_session), member=Depends(require_tenant)
 ):
-    """Record a rent payment; rejects anything that pushes the month over the target."""
+    """One tenant fronts (part of) the month's rent — recorded as a shared rent expense that
+    nets into settle-up. Rejects anything that pushes the month over the target."""
     return await rent.record_rent_payment(session, actor=member, member_id=body.memberId, amount=body.amount, month=body.month)
 
 

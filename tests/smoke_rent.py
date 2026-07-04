@@ -1,4 +1,5 @@
-"""Rent-as-landlord smoke test — ₹58,000 monthly validation + per-tenant targets.
+"""Rent smoke test — rent is a shared expense: one tenant fronts it, the others owe
+their rent-share, and it nets into settle-up like any other expense.
 
     .venv/bin/python3 tests/smoke_rent.py
 """
@@ -16,6 +17,8 @@ os.environ["MONTHLY_RENT"] = "58000"
 
 from app.core.errors import DomainError  # noqa: E402
 from app.db.session import create_all, dispose, session_scope  # noqa: E402
+from app.domain.settle import simplify  # noqa: E402
+from app.repositories import expenses as expenses_repo  # noqa: E402
 from app.repositories import members as members_repo  # noqa: E402
 from app.services import balances, members as members_svc, rent  # noqa: E402
 
@@ -25,6 +28,12 @@ async def add(name):
         return await members_repo.add(s, name=name, role="tenant")
 
 
+async def net(member_id):
+    async with session_scope() as s:
+        m = await members_repo.get(s, member_id)
+        return await balances.net_for(s, m)
+
+
 async def main():
     await create_all()
     try:
@@ -32,7 +41,7 @@ async def main():
         async with session_scope() as s:
             await members_svc.set_rent_shares(s, actor=a, shares={a.id: 27, b.id: 27, c.id: 27, d.id: 19})
 
-        # --- per-tenant targets from 27/27/27/19 of ₹58,000 ---
+        # --- per-tenant targets from 27/27/27/19 of ₹58,000 (unchanged) ---
         async with session_scope() as s:
             st = await rent.rent_status(s, "2026-07")
         tgt = {p["name"]: p["target"] for p in st["perTenant"]}
@@ -40,37 +49,51 @@ async def main():
         assert st["target"] == 58000 and st["collected"] == 0 and st["remaining"] == 58000 and not st["complete"]
         print("ok rent status: per-tenant targets 15660/15660/15660/11020, target ₹58,000")
 
-        # --- partial payments accumulate; under-target allowed ---
+        # --- A fronts the whole month's rent -> recorded as a shared rent expense ---
         async with session_scope() as s:
-            r = await rent.record_rent_payment(s, actor=a, member_id=a.id, amount=15660, month="2026-07")
-        assert r["collected"] == 15660 and r["remaining"] == 42340 and not r["complete"]
-        async with session_scope() as s:
-            for m in (b, c):
-                await rent.record_rent_payment(s, actor=m, member_id=m.id, amount=15660, month="2026-07")
-        print("ok rent: partial payments accumulate (under-target allowed)")
+            r = await rent.record_rent_payment(s, actor=a, member_id=a.id, amount=58000, month="2026-07")
+        assert r["collected"] == 58000 and r["remaining"] == 0 and r["complete"]
 
-        # --- over-payment rejected with the exact delta ---
+        # progress bar still shows the month covered, and *who* fronted it
+        async with session_scope() as s:
+            st = await rent.rent_status(s, "2026-07")
+        assert st["collected"] == 58000 and st["complete"]
+        paid = {p["name"]: p["paid"] for p in st["perTenant"]}
+        assert paid == {"A": 58000, "B": 0, "C": 0, "D": 0}
+        print("ok rent: A fronts ₹58,000 -> month complete, board shows A paid it")
+
+        # --- THE FIX: rent now nets into the settle graph (A credited, others owe shares) ---
+        na = await net(a.id)
+        assert na["expensesPaid"] == 58000 and na["expenseShare"] == 15660 and na["net"] == 42340
+        assert (await net(b.id))["net"] == -15660 and (await net(d.id))["net"] == -11020
+        print("ok rent: A owed +42,340; B/C owe 15,660, D owes 11,020 (fronter credited)")
+
+        # --- household still sums to zero; simplifier squares it in 3 transfers to A ---
+        async with session_scope() as s:
+            rows = await balances.all_balances(s)
+        bmap = balances.balances_map(rows)
+        assert sum(bmap.values()) == 0
+        txns = simplify(bmap)
+        assert len(txns) == 3 and {t[1] for t in txns} == {a.id}  # everything flows to A
+        print("ok rent: balances sum to 0, settle-up squares it in 3 transfers to A")
+
+        # --- over-target fronting rejected with the exact delta ---
         async with session_scope() as s:
             try:
-                await rent.record_rent_payment(s, actor=d, member_id=d.id, amount=20000, month="2026-07")  # 46980+20000 > 58000
+                await rent.record_rent_payment(s, actor=b, member_id=b.id, amount=1, month="2026-07")
                 assert False
             except DomainError as e:
                 assert "over" in str(e).lower()
-        print("ok rent: over-target payment rejected with the delta")
+        print("ok rent: fronting past the ₹58,000 target rejected with the delta")
 
-        # --- exact completion fires 'complete' ---
+        # --- a tenant repaying their share settles them and lowers A's credit ---
         async with session_scope() as s:
-            r = await rent.record_rent_payment(s, actor=d, member_id=d.id, amount=11020, month="2026-07")
-        assert r["collected"] == 58000 and r["remaining"] == 0 and r["complete"]
-        print("ok rent: reaching ₹58,000 exactly marks the month complete")
+            await expenses_repo.insert_payment(s, from_id=b.id, to_id=a.id, amount=15660, method="upi", created_by=b.id)
+        assert (await net(b.id))["net"] == 0
+        assert (await net(a.id))["net"] == 42340 - 15660
+        print("ok rent: B repays 15,660 -> B square, A's credit drops")
 
-        # --- rent is landlord-facing: it does NOT touch member↔member balances ---
-        async with session_scope() as s:
-            na = await balances.net_for(s, await members_repo.get(s, a.id))
-        assert na["net"] == 0 and na["sent"] == 0  # rent payment to house excluded from 'sent'
-        print("ok rent: payments to the house stay out of the settle-up balances")
-
-        # --- a different month is independent ---
+        # --- months are independent ---
         async with session_scope() as s:
             st_aug = await rent.rent_status(s, "2026-08")
         assert st_aug["collected"] == 0 and st_aug["remaining"] == 58000
