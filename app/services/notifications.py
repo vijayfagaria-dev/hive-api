@@ -369,6 +369,43 @@ async def bill_auto_confirmed(
     )
 
 
+# --- Expenses ---------------------------------------------------------------
+
+async def expense_added(
+    session: AsyncSession, *, recipients: Sequence[Member], expense_id: int,
+    payer_name: str, category: str, amount: int,
+) -> None:
+    await notify_members(
+        session, recipients, kind="expense_added",
+        title=f"🧾 {payer_name} added a {category} expense — {rupees(amount)}",
+        body="Open Expenses to see your share and settle up.",
+    )
+
+
+async def settle_proposed(session: AsyncSession, *, debtor: Member, to_name: str, amount: int) -> None:
+    await notify_member(
+        session, debtor, kind="settle_proposed",
+        title=f"💸 Settle up — pay {to_name} {rupees(amount)}",
+        body="Open Settle Up to clear it in a tap.",
+    )
+
+
+async def rent_completed(session: AsyncSession, *, recipients: Sequence[Member], month: str, target: int) -> None:
+    await notify_members(
+        session, recipients, kind="rent_completed",
+        title=f"✅ Rent complete — {month}",
+        body=f"The full {rupees(target)} is in for {month}. 🎉",
+    )
+
+
+async def rent_incomplete(session: AsyncSession, *, recipients: Sequence[Member], month: str, remaining: int) -> None:
+    await notify_members(
+        session, recipients, kind="rent_incomplete",
+        title=f"⏳ Rent still short — {month}",
+        body=f"{rupees(remaining)} left to reach this month's target.",
+    )
+
+
 # --- Money settlement -------------------------------------------------------
 
 async def settlement_closed(

@@ -2,6 +2,16 @@
 (used by create_all and Alembic autogenerate)."""
 
 from app.db.models.bill import Bill, BillEvent, BillShare
+from app.db.models.expense import (
+    Expense,
+    ExpenseEvent,
+    ExpenseSplit,
+    ExpenseTemplate,
+    Payment,
+    RecurringExpense,
+    SettleRun,
+    SettleTxn,
+)
 from app.db.models.fine import Fine, FineEvent, FineProof, FineVote
 from app.db.models.invitation import Invitation
 from app.db.models.ledger import LedgerEntry, Settlement
@@ -31,6 +41,14 @@ __all__ = [
     "Bill",
     "BillShare",
     "BillEvent",
+    "Expense",
+    "ExpenseSplit",
+    "Payment",
+    "ExpenseEvent",
+    "ExpenseTemplate",
+    "RecurringExpense",
+    "SettleRun",
+    "SettleTxn",
     "LedgerEntry",
     "Settlement",
     "Notification",

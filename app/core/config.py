@@ -16,7 +16,13 @@ load_dotenv()
 
 def _int(name: str, default: int) -> int:
     raw = os.getenv(name)
-    return int(raw) if raw else default
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        # A malformed value must never take the whole app down — fall back to the default.
+        return default
 
 
 @dataclass(frozen=True)

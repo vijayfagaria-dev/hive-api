@@ -12,6 +12,7 @@ from app.api.routes import (
     auth,
     bills,
     complaints,
+    expenses,
     home,
     household,
     money,
@@ -35,3 +36,4 @@ api_router.include_router(proposals.router)
 api_router.include_router(rulebook.router)
 api_router.include_router(household.router)
 api_router.include_router(money.router)
+api_router.include_router(expenses.router)

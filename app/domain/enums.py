@@ -69,6 +69,61 @@ class BillEventType(StrEnum):
     RESOLVED = "resolved"              # reserved: future dispute resolution / voting
 
 
+# --- Expenses (the unified Splitwise-style money model) ---------------------
+
+class ExpenseCategory(StrEnum):
+    ELECTRICITY = "electricity"
+    WATER = "water"
+    HOUSE_HELP = "house_help"
+    INTERNET = "internet"
+    GAS = "gas"
+    CLEANER = "cleaner"
+    GROCERIES = "groceries"
+    BROKERAGE = "brokerage"
+    MISC = "misc"
+
+
+class SplitStrategy(StrEnum):
+    EQUAL = "equal"            # split evenly across participants
+    RATIO = "ratio"           # by per-participant weights (e.g. 27/27/27/19)
+    PERCENTAGE = "percentage"  # by per-participant %, must total 100
+    SHARES = "shares"         # by arbitrary integer shares (2:2:1)
+    FIXED = "fixed"           # explicit rupees per participant, must sum to total
+    CUSTOM = "custom"         # explicit rupees (distinct UX label), must sum to total
+
+
+class ExpenseStatus(StrEnum):
+    PENDING = "pending"        # declared; awaiting confirmation window / dispute
+    CONFIRMED = "confirmed"
+    DISPUTED = "disputed"
+    VOID = "void"             # soft-deleted; excluded from every balance
+
+
+class PaymentMethod(StrEnum):
+    UPI = "upi"
+    CASH = "cash"
+    ADJUSTMENT = "adjustment"  # a manual balance correction, not a real transfer
+
+
+class ExpenseEventType(StrEnum):
+    CREATED = "created"
+    EDITED = "edited"
+    VOIDED = "voided"
+    DISPUTED = "disputed"
+    CONFIRMED = "confirmed"
+    GENERATED = "generated"    # produced by the recurring sweep
+
+
+class RecurrenceFreq(StrEnum):
+    MONTHLY = "monthly"
+
+
+class RecurringStatus(StrEnum):
+    ACTIVE = "active"
+    PAUSED = "paused"
+    ENDED = "ended"
+
+
 # --- Money ledger (rent shares, advances, broker, settlement, penalties) -----
 
 class LedgerEntryType(StrEnum):
