@@ -39,6 +39,12 @@ class SettleBody(BaseModel):
     note: Optional[str] = Field(default=None, max_length=200)
 
 
+class SettleTxnPaidBody(BaseModel):
+    # Omit (or send null) to clear the whole outstanding balance; a smaller value is a
+    # part payment and leaves the rest on the worklist.
+    amount: Optional[int] = Field(default=None, gt=0)
+
+
 class RentBody(BaseModel):
     memberId: int
     amount: int = Field(gt=0)

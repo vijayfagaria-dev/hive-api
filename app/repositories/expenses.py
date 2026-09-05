@@ -227,7 +227,8 @@ async def list_open_txns(session: AsyncSession) -> Sequence[Row]:
     stmt = (
         select(
             SettleTxn.id, SettleTxn.from_id, frm.name.label("from_name"),
-            SettleTxn.to_id, to.name.label("to_name"), SettleTxn.amount, SettleTxn.status,
+            SettleTxn.to_id, to.name.label("to_name"), SettleTxn.amount,
+            SettleTxn.paid_amount, SettleTxn.status,
         )
         .join(frm, frm.id == SettleTxn.from_id)
         .join(to, to.id == SettleTxn.to_id)

@@ -22,6 +22,7 @@ from app.schemas.expenses import (
     RecurringBody,
     RentBody,
     SettleBody,
+    SettleTxnPaidBody,
     TemplateBody,
     expense_out,
     recurring_out,
@@ -126,12 +127,26 @@ async def settle_close(
     return await settle_up.close(session, actor=member, note=body.note)
 
 
+@router.get("/settle/open")
+async def settle_open(session: AsyncSession = Depends(get_session), member=Depends(require_login)):
+    """The persisted worklist — open transfers with their txn ids and what's left to pay."""
+    return await settle_up.open_txns(session)
+
+
 @router.post("/settle/txn/{txn_id}/paid")
 async def settle_txn_paid(
-    txn_id: int, session: AsyncSession = Depends(get_session), member=Depends(require_tenant)
+    txn_id: int,
+    body: Optional[SettleTxnPaidBody] = None,
+    session: AsyncSession = Depends(get_session),
+    member=Depends(require_tenant),
 ):
-    """Record that a proposed transfer actually happened (writes a payment)."""
-    return await settle_up.mark_txn_paid(session, actor=member, txn_id=txn_id)
+    """Record that a proposed transfer actually happened (writes a payment).
+
+    No body — or `{}` — pays off the whole outstanding balance. `{"amount": 1000}` records
+    a part payment and leaves the remainder open for another day."""
+    return await settle_up.mark_txn_paid(
+        session, actor=member, txn_id=txn_id, amount=body.amount if body else None
+    )
 
 
 @router.post("/settle/txn/{txn_id}/cancel")

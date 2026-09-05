@@ -182,12 +182,21 @@ class SettleTxn(Base):
     from_id: Mapped[int] = mapped_column(ForeignKey("members.id"), nullable=False)
     to_id: Mapped[int] = mapped_column(ForeignKey("members.id"), nullable=False)
     amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Running total paid so far. Partial payments accumulate here and the row stays
+    # 'proposed' until it's covered, so the remainder keeps showing on the worklist.
+    # `amount` is never mutated — it's the snapshot of what the simplifier proposed.
+    paid_amount: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     status: Mapped[str] = mapped_column(String, nullable=False, default="proposed")
     payment_id: Mapped[Optional[int]] = mapped_column(ForeignKey("payments.id"))  # the payment that cleared it
     created_at: Mapped[str] = mapped_column(String, nullable=False, default=now_iso)
 
     __table_args__ = (
         CheckConstraint("amount > 0", name="settle_txn_amount_positive"),
+        CheckConstraint(
+            "paid_amount >= 0 AND paid_amount <= amount", name="settle_txn_paid_within_amount"
+        ),
         CheckConstraint("status IN ('proposed', 'paid', 'cancelled')", name="settle_txn_status_valid"),
         Index("idx_settle_txns_run", "settle_run_id"),
         Index("idx_settle_txns_status", "status"),
