@@ -138,6 +138,17 @@ async def change_password(
     member.password_hash = hash_password(new_password)
 
 
+async def reset_password(session: AsyncSession, member: Member, new_password: str) -> None:
+    """Admin password reset — sets a new password without the current one.
+
+    The self-service path is `change_password`; this one is for `app.admin` only
+    (a locked-out member has no current password to prove).
+    """
+    if len(new_password) < 6:
+        raise Unprocessable("Password must be at least 6 characters.")
+    member.password_hash = hash_password(new_password)
+
+
 async def set_role(session: AsyncSession, member: Member, role: str) -> None:
     """Promote/demote — the only path to the tenant role (admin-only)."""
     member.role = role

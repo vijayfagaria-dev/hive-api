@@ -3,6 +3,7 @@
     python -m app.admin list
     python -m app.admin promote <username>     # guest -> tenant
     python -m app.admin demote  <username>     # tenant -> guest
+    python -m app.admin reset-password <username> <new-password>
     python -m app.admin reset-rules            # apply the house-rules seed to this DB
 
 The manual "make them a tenant" step — there is no self-service path to tenant.
@@ -32,6 +33,18 @@ async def _set_role(username: str, role: str) -> None:
     await dispose()
 
 
+async def _reset_password(username: str, password: str) -> None:
+    await create_all()
+    async with session_scope() as session:
+        member = await members_repo.get_by_username(session, username)
+        if member is None:
+            print(f"No member with username {username!r}.")
+            return
+        await accounts.reset_password(session, member, password)
+        print(f"Password reset for {member.username} (id {member.id}).")
+    await dispose()
+
+
 async def _list() -> None:
     await create_all()
     async with session_scope() as session:
@@ -57,12 +70,17 @@ def main(argv: list[str]) -> None:
     if len(argv) >= 3 and argv[1] in ("promote", "demote"):
         role = Role.TENANT if argv[1] == "promote" else Role.GUEST
         asyncio.run(_set_role(argv[2], role))
+    elif len(argv) >= 4 and argv[1] == "reset-password":
+        asyncio.run(_reset_password(argv[2], argv[3]))
     elif len(argv) >= 2 and argv[1] == "list":
         asyncio.run(_list())
     elif len(argv) >= 2 and argv[1] == "reset-rules":
         asyncio.run(_reset_rules())
     else:
-        print("usage: python -m app.admin [ list | promote <username> | demote <username> | reset-rules ]")
+        print(
+            "usage: python -m app.admin [ list | promote <username> | demote <username> "
+            "| reset-password <username> <new-password> | reset-rules ]"
+        )
 
 
 if __name__ == "__main__":
