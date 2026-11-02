@@ -1,6 +1,6 @@
 """Domain vocabulary — statuses, transitions, and the values shared across layers.
 
-A complaint *is* a fine (DESIGN.md "Handling fine-system abuse"). The persisted
+A complaint *is* a fine. The persisted
 status enum is intentionally small; the "voting" phase is status='disputed' with
 an open vote_deadline. Keeping these as one source prevents magic strings drifting
 across the API, services, and repositories.

@@ -1,8 +1,7 @@
 """UPI payment links — the NPCI-standard `upi://pay` intent + Android app launchers.
 
 Pure and transport-free. We only FORMAT a request to pay a payee's own VPA; the money
-then moves bank-to-bank inside the payer's UPI app. The app never holds or moves funds
-(DESIGN.md — "the wallet is the jar; it only touches read-only").
+then moves bank-to-bank inside the payer's UPI app. The app never holds or moves funds.
 
 **Why not per-app custom schemes?** The old `tez://`, `phonepe://`, `paytmmp://` vendor
 schemes — launched from a *web* origin, to a personal (P2P) VPA, with a pre-filled amount

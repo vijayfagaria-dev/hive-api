@@ -1,6 +1,6 @@
 """Billing — bill creation with the point-in-time share snapshot, and dues.
 
-The snapshot is load-bearing (DESIGN.md): splits are frozen at creation over the
+The snapshot is load-bearing: splits are frozen at creation over the
 *then-active* tenants, so a later roster change never rewrites a past month.
 """
 

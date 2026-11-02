@@ -140,7 +140,7 @@ class Settings:
     # The pot's collection UPI ID (VPA), e.g. flatpot@okhdfcbank. Empty -> the pay
     # screen shows a "not set up" state (and falls back to WALLET_UPI_QR_URL if set).
     # We only FORMAT standard upi:// request links to this VPA; money moves
-    # bank-to-bank inside the payer's UPI app — no custody (DESIGN.md, "the jar").
+    # bank-to-bank inside the payer's UPI app — the app never holds the money.
     upi_vpa: str = os.getenv("UPI_VPA", "").strip()
     upi_payee_name: str = os.getenv("UPI_PAYEE_NAME", "Hive Pot").strip() or "Hive Pot"
 

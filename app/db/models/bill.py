@@ -1,6 +1,6 @@
 """Bill aggregate ORM models — a recurring bill and its point-in-time shares.
 
-`bill_shares` is the load-bearing snapshot (DESIGN.md): one row per active tenant
+`bill_shares` is the load-bearing snapshot: one row per active tenant
 at creation, frozen forever so a later roster change never rewrites a past split.
 """
 

@@ -72,8 +72,7 @@ def allowed_actions(fine, viewer_id: int) -> dict:
     Only the **accused** may respond to a pending complaint — Accept, Deny, or Ignore
     (Ignore = take no action; the cooling sweep then auto-confirms). Denying opens a
     neutral-member vote, on which only members who are neither accuser nor accused may
-    vote. (This replaced the earlier "anyone may Deny" rule — see DESIGN.md → Complaint
-    workflow.)"""
+    vote. (This replaced the earlier "anyone may Deny" rule.)"""
     is_accused = fine.member_id == viewer_id
     pending = fine.status == FineStatus.PENDING
     return {

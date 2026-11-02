@@ -36,8 +36,7 @@ tests/        standalone smoke suites (no pytest)
 ```
 
 Flow: **routes → services → repositories → models**. Adding a feature = add a model + repo
-+ service + schema + route. See [DESIGN.md](./DESIGN.md) (product) and [CLAUDE.md](./CLAUDE.md)
-(house rules); the frontend contract is in [FRONTEND_BRIEF.md](./FRONTEND_BRIEF.md).
++ service + schema + route.
 
 ## Run
 
@@ -59,6 +58,18 @@ python -m app.admin promote <username>                # guest -> tenant
 Set a random `SECRET_KEY` before exposing logins (sessions are signed with it). Optional:
 `VAPID_*` (Web Push), `SMTP_*` (email), `WHATSAPP_*` (WhatsApp Cloud API),
 `FLAT_*` ("Getting here" card), `WALLET_UPI_QR_URL` (pay screen) — see `.env.example`.
+
+## Deploy
+
+Runs on one small VM: Caddy terminates HTTPS and sends `/api/*` to uvicorn (a single
+worker, so the background sweep runs once) and everything else to the Next.js app.
+`deploy/` has the Caddyfile, both systemd units and the env templates. The SQLite DB and
+proof images live outside the repo, in `/var/lib/hive`.
+
+```bash
+git pull && .venv/bin/pip install -r requirements.txt && .venv/bin/python -m alembic upgrade head
+sudo systemctl restart hive-api
+```
 
 ## Migrations (Alembic)
 
