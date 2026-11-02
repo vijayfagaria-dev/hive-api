@@ -9,6 +9,7 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories import bills as bills_repo
+from app.repositories import expenses as expenses_repo
 from app.repositories import fines as fines_repo
 from app.services import billing
 
@@ -61,3 +62,24 @@ async def dashboard(session: AsyncSession) -> dict:
         "overturn": overturn_rows,
         "bills": await bills_repo.recent_bills(session),
     }
+
+
+async def monthly_spending(session: AsyncSession, *, member_id: int, current: str, past: int = 6) -> list[dict]:
+    """This month plus the latest `past` earlier months that had spending, newest first:
+    what the flat spent, the member's share of it and what they fronted — overall and
+    per category (rent included)."""
+    earlier = await expenses_repo.months_with_expenses(session, upto=current, limit=past + 1)
+    months = [current] + [m for m in earlier if m < current][:past]
+    out = {m: {"month": m, "total": 0, "mine": 0, "paid": 0, "categories": {}} for m in months}
+    for month, cat, total in await expenses_repo.totals_by_category(session, months):
+        out[month]["categories"][cat] = {"category": cat, "total": int(total), "mine": 0}
+        out[month]["total"] += int(total)
+    for month, cat, mine in await expenses_repo.shares_by_category(session, member_id, months):
+        out[month]["categories"][cat]["mine"] = int(mine)
+        out[month]["mine"] += int(mine)
+    for month, paid in (await expenses_repo.paid_by_month(session, member_id, months)).items():
+        out[month]["paid"] = paid
+    return [
+        {**row, "categories": sorted(row["categories"].values(), key=lambda c: -c["total"])}
+        for row in out.values()
+    ]

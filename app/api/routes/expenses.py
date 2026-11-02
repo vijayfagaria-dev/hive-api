@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_session, require_login, require_permission, require_tenant
 from app.core.errors import NotFound
 from app.domain.enums import Permission
-from app.domain.time import now_iso
+from app.domain.time import latest_local_month, now_iso
 from app.repositories import expenses as expenses_repo
 from app.schemas.expenses import (
     ExpenseBody,
@@ -32,7 +32,7 @@ from app.schemas.expenses import (
     split_out,
     template_out,
 )
-from app.services import balances, expenses, recurring, rent, settle_up
+from app.services import balances, expenses, recurring, rent, reporting, settle_up
 
 router = APIRouter(tags=["expenses"])
 
@@ -58,6 +58,18 @@ async def list_expenses(
 ):
     rows = await expenses_repo.list_expenses(session, month=month, category=category)
     return {"expenses": [expense_out(r) for r in rows]}
+
+
+@router.get("/spending")
+async def spending(
+    current: Optional[str] = None,
+    session: AsyncSession = Depends(get_session), member=Depends(_finances),
+):
+    """Per-month spending for the flat and for me. `current` is the viewer's local month."""
+    if current is not None:
+        rent.check_month(current)
+    month = current or latest_local_month()
+    return {"months": await reporting.monthly_spending(session, member_id=member.id, current=month)}
 
 
 @router.get("/expenses/{expense_id}")

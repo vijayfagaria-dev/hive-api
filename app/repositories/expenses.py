@@ -108,6 +108,48 @@ async def list_expenses(
     return (await session.execute(stmt)).all()
 
 
+# --- monthly spending (the flat's totals and one member's share, per month/category) --
+
+async def months_with_expenses(session: AsyncSession, *, upto: str, limit: int) -> list[str]:
+    """The latest `limit` 'YYYY-MM' months up to `upto` that have a live expense, newest first."""
+    stmt = (
+        select(Expense.month).where(_LIVE, Expense.month <= upto)
+        .distinct().order_by(Expense.month.desc()).limit(limit)
+    )
+    return list((await session.execute(stmt)).scalars())
+
+
+async def totals_by_category(session: AsyncSession, months: list[str]) -> Sequence[Row]:
+    """(month, category, total) — what the whole flat spent."""
+    stmt = (
+        select(Expense.month, Expense.category, func.sum(Expense.amount).label("total"))
+        .where(_LIVE, Expense.month.in_(months))
+        .group_by(Expense.month, Expense.category)
+    )
+    return (await session.execute(stmt)).all()
+
+
+async def shares_by_category(session: AsyncSession, member_id: int, months: list[str]) -> Sequence[Row]:
+    """(month, category, mine) — a member's owed share of those expenses."""
+    stmt = (
+        select(Expense.month, Expense.category, func.sum(ExpenseSplit.owed_amount).label("mine"))
+        .join(ExpenseSplit, ExpenseSplit.expense_id == Expense.id)
+        .where(_LIVE, Expense.month.in_(months), ExpenseSplit.member_id == member_id)
+        .group_by(Expense.month, Expense.category)
+    )
+    return (await session.execute(stmt)).all()
+
+
+async def paid_by_month(session: AsyncSession, member_id: int, months: list[str]) -> dict[str, int]:
+    """month -> what a member fronted for the flat."""
+    stmt = (
+        select(Expense.month, func.sum(Expense.amount))
+        .where(_LIVE, Expense.month.in_(months), Expense.payer_id == member_id)
+        .group_by(Expense.month)
+    )
+    return {m: int(t) for m, t in (await session.execute(stmt)).all()}
+
+
 # --- balance components (per member; void excluded, member<->member only) ----
 
 async def paid_by(session: AsyncSession, member_id: int) -> int:
