@@ -57,7 +57,7 @@ async def dashboard(session: AsyncSession) -> dict:
         "pot": await pot(session),
         "pot_count": await owed_count(session),
         "dues": dues,
-        "recent": await recent_complaints(session, 15),
+        "recent": await recent_complaints(session, 5),  # a glance; the Feed has the full list
         "overturn": overturn_rows,
         "bills": await bills_repo.recent_bills(session),
     }

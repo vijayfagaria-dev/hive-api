@@ -80,6 +80,13 @@ async def main():
         assert {r["name"] for r in dash["overturn"]} == {"BadReporter"}
         print("ok Bug6: dashboard overturn board is filtered too")
 
+        # 8 complaints filed: the dashboard carries only the latest 5; the Feed gets them all.
+        async with session_scope() as s:
+            feed = await reporting.recent_complaints(s, 100)
+        assert len(dash["recent"]) == 5 and len(feed) == 8
+        assert [r.id for r in dash["recent"]] == [r.id for r in feed[:5]]
+        print("ok dashboard recent complaints capped at 5 (newest first); feed has all 8")
+
         # --- Settle-up settles the PEER graph only; fines/ledger are excluded ---
         async with session_scope() as s:
             await fines_repo.insert(

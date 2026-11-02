@@ -83,6 +83,8 @@ def main():
         assert c.get("/api/balances/me").status_code == 200
         assert c.get("/api/money").status_code == 200
         print("ok guest -> flat-wide money reads 403; own statement 200")
+        assert c.get("/api/complaints").status_code == 403
+        print("ok guest -> /api/complaints (the Feed) 403")
 
         # /api/me payload shape
         me = c.get("/api/me").json()
@@ -137,6 +139,12 @@ def main():
         dash = c.get("/api/dashboard")
         assert dash.status_code == 200 and "pot" in dash.json() and "recentFines" in dash.json()
         print("ok after promotion, same session -> /api/dashboard 200")
+
+        # The dashboard carries only a glance (<= 5); the Feed endpoint has the full list.
+        feed = c.get("/api/complaints")
+        assert feed.status_code == 200 and any(f["id"] == s["foreign"] for f in feed.json()["complaints"])
+        assert len(dash.json()["recentFines"]) <= 5
+        print("ok /api/complaints lists the feed; dashboard recentFines capped at 5")
 
         # --- Full complaint workflow: accept, dispute->vote, notifications, proof
         ids = {}

@@ -4,18 +4,18 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_session, require_login
+from app.api.deps import get_session, require_login, require_tenant
 from app.core.config import settings
 from app.core.errors import DomainError, Forbidden, NotFound, PayloadTooLarge, UnsupportedMedia
 from app.domain.enums import PHASE, ProofSource
 from app.infra import storage
 from app.repositories import fines as fines_repo
-from app.schemas.complaints import DisputeBody, VoteBody, detail_out
-from app.services import complaints
+from app.schemas.complaints import DisputeBody, VoteBody, detail_out, recent_complaint_out
+from app.services import complaints, reporting
 
 router = APIRouter(prefix="/complaints", tags=["complaints"])
 proofs_router = APIRouter(prefix="/proofs", tags=["complaints"])
@@ -39,6 +39,15 @@ async def _read_proofs(images: list[UploadFile], uploaded_by: int) -> list[dict]
              "uploaded_by": uploaded_by}
         )
     return proofs
+
+
+@router.get("")
+async def list_complaints(
+    limit: int = Query(100, ge=1, le=500),
+    session: AsyncSession = Depends(get_session), member=Depends(require_tenant),
+):
+    """The Feed: newest complaints first (the dashboard only carries the latest few)."""
+    return {"complaints": [recent_complaint_out(f) for f in await reporting.recent_complaints(session, limit)]}
 
 
 @router.post("")
