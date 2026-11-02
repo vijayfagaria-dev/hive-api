@@ -1,7 +1,7 @@
 """Money routes — the per-member statement, the admin ledger, and the settlement.
 
 `/money` is any logged-in member's own statement. Reads of the flat-wide picture
-(balances, ledger, settlements) need VIEW_MEMBERS; all mutations need MANAGE_USERS.
+(balances, ledger, settlements) need VIEW_FINANCES (tenants only); all mutations need MANAGE_USERS.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ async def my_money(session: AsyncSession = Depends(get_session), member=Depends(
 @router.get("/balances")
 async def balances(
     session: AsyncSession = Depends(get_session),
-    member=Depends(require_permission(Permission.VIEW_MEMBERS)),
+    member=Depends(require_permission(Permission.VIEW_FINANCES)),
 ):
     return {"balances": await money.all_balances(session)}
 
@@ -43,7 +43,7 @@ async def balances(
 @router.get("/ledger")
 async def ledger_list(
     session: AsyncSession = Depends(get_session),
-    member=Depends(require_permission(Permission.VIEW_MEMBERS)),
+    member=Depends(require_permission(Permission.VIEW_FINANCES)),
 ):
     return {"entries": [ledger_entry_out(r) for r in await ledger_repo.list_recent(session)]}
 
@@ -87,7 +87,7 @@ async def ledger_adjust(
 @router.get("/settlements")
 async def settlements_list(
     session: AsyncSession = Depends(get_session),
-    member=Depends(require_permission(Permission.VIEW_MEMBERS)),
+    member=Depends(require_permission(Permission.VIEW_FINANCES)),
 ):
     return {"settlements": [settlement_out(s) for s in await ledger_repo.list_settlements(session)]}
 

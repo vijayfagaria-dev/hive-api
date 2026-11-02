@@ -255,6 +255,9 @@ class Permission(StrEnum):
     CREATE_EXPENSE = "create_expense"
     EDIT_EXPENSE = "edit_expense"
     SETTLE = "settle"              # record payments / close a settle-up run
+    # Read the flat-wide money picture (everyone's expenses, balances, rent, settle-up,
+    # ledger). Tenants only — a guest sees just their own statement and their fines.
+    VIEW_FINANCES = "view_finances"
 
 
 class MemberEventType(StrEnum):

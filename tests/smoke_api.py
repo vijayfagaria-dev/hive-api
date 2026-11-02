@@ -75,6 +75,15 @@ def main():
         assert c.get("/api/dashboard").status_code == 403
         print("ok guest -> /api/dashboard 403")
 
+        # Guests never see the flat's money — only their own statement (VIEW_FINANCES).
+        for path in ("/api/expenses", "/api/balances", "/api/settle/preview", "/api/settle/open",
+                     "/api/rent/2026-11", "/api/templates", "/api/recurring",
+                     "/api/money/balances", "/api/money/ledger", "/api/money/settlements"):
+            assert c.get(path).status_code == 403, path
+        assert c.get("/api/balances/me").status_code == 200
+        assert c.get("/api/money").status_code == 200
+        print("ok guest -> flat-wide money reads 403; own statement 200")
+
         # /api/me payload shape
         me = c.get("/api/me").json()
         assert "kitchen" in me["rulesByCategory"] and any(x["text"] == KITCHEN for x in me["rulesByCategory"]["kitchen"])

@@ -1,7 +1,9 @@
 """Expense + balance routes — the Splitwise-style money surface.
 
-Any tenant can add an expense or record a payment; balances are readable by any
-logged-in member (transparency). Balances are always derived (services/balances.py).
+Any tenant can add an expense or record a payment. The flat-wide reads (expenses,
+balances, settle-up, rent, templates, recurring) need VIEW_FINANCES — tenants only, so a
+guest never sees the flat's money; any member can read their own `/balances/me`.
+Balances are always derived (services/balances.py).
 """
 
 from __future__ import annotations
@@ -11,8 +13,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_session, require_login, require_tenant
+from app.api.deps import get_session, require_login, require_permission, require_tenant
 from app.core.errors import NotFound
+from app.domain.enums import Permission
 from app.domain.time import now_iso
 from app.repositories import expenses as expenses_repo
 from app.schemas.expenses import (
@@ -33,6 +36,8 @@ from app.services import balances, expenses, recurring, rent, settle_up
 
 router = APIRouter(tags=["expenses"])
 
+_finances = require_permission(Permission.VIEW_FINANCES)
+
 
 @router.post("/expenses")
 async def create_expense(
@@ -49,7 +54,7 @@ async def create_expense(
 @router.get("/expenses")
 async def list_expenses(
     month: Optional[str] = None, category: Optional[str] = None,
-    session: AsyncSession = Depends(get_session), member=Depends(require_login),
+    session: AsyncSession = Depends(get_session), member=Depends(_finances),
 ):
     rows = await expenses_repo.list_expenses(session, month=month, category=category)
     return {"expenses": [expense_out(r) for r in rows]}
@@ -57,7 +62,7 @@ async def list_expenses(
 
 @router.get("/expenses/{expense_id}")
 async def expense_detail(
-    expense_id: int, session: AsyncSession = Depends(get_session), member=Depends(require_login)
+    expense_id: int, session: AsyncSession = Depends(get_session), member=Depends(_finances)
 ):
     exp = await expenses_repo.get(session, expense_id)
     if exp is None:
@@ -103,7 +108,7 @@ async def record_payment(
 
 
 @router.get("/balances")
-async def list_balances(session: AsyncSession = Depends(get_session), member=Depends(require_login)):
+async def list_balances(session: AsyncSession = Depends(get_session), member=Depends(_finances)):
     return {"balances": await balances.all_balances(session)}
 
 
@@ -115,7 +120,7 @@ async def my_balance(session: AsyncSession = Depends(get_session), member=Depend
 # --- settle up -------------------------------------------------------------
 
 @router.get("/settle/preview")
-async def settle_preview(session: AsyncSession = Depends(get_session), member=Depends(require_login)):
+async def settle_preview(session: AsyncSession = Depends(get_session), member=Depends(_finances)):
     """The near-minimal set of transfers that squares everyone (live; no writes)."""
     return await settle_up.preview(session)
 
@@ -128,7 +133,7 @@ async def settle_close(
 
 
 @router.get("/settle/open")
-async def settle_open(session: AsyncSession = Depends(get_session), member=Depends(require_login)):
+async def settle_open(session: AsyncSession = Depends(get_session), member=Depends(_finances)):
     """The persisted worklist — open transfers with their txn ids and what's left to pay."""
     return await settle_up.open_txns(session)
 
@@ -161,7 +166,7 @@ async def settle_txn_cancel(
 # --- rent (a shared expense fronted by one tenant; ₹target validated) ------
 
 @router.get("/rent/{month}")
-async def rent_status(month: str, session: AsyncSession = Depends(get_session), member=Depends(require_login)):
+async def rent_status(month: str, session: AsyncSession = Depends(get_session), member=Depends(_finances)):
     """Rent progress for a month: target, collected, remaining, who's fronted what."""
     return await rent.rent_status(session, month)
 
@@ -190,14 +195,14 @@ async def create_template(
 
 
 @router.get("/templates")
-async def list_templates(session: AsyncSession = Depends(get_session), member=Depends(require_login)):
+async def list_templates(session: AsyncSession = Depends(get_session), member=Depends(_finances)):
     return {"templates": [template_out(t) for t in await expenses_repo.list_templates(session)]}
 
 
 @router.get("/templates/{template_id}/prefill")
 async def prefill_template(
     template_id: int, month: Optional[str] = None,
-    session: AsyncSession = Depends(get_session), member=Depends(require_login),
+    session: AsyncSession = Depends(get_session), member=Depends(_finances),
 ):
     """An editable draft expense from a template — the 'Generate July Rent' one-tap flow."""
     return await recurring.prefill(session, template_id, month)
@@ -212,7 +217,7 @@ async def create_recurring(
 
 
 @router.get("/recurring")
-async def list_recurring(session: AsyncSession = Depends(get_session), member=Depends(require_login)):
+async def list_recurring(session: AsyncSession = Depends(get_session), member=Depends(_finances)):
     return {"recurring": [recurring_out(r) for r in await expenses_repo.list_recurring(session)]}
 
 

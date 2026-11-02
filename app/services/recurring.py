@@ -34,6 +34,15 @@ _CATEGORIES = {c.value for c in ExpenseCategory}
 _STRATEGIES = {s.value for s in SplitStrategy}
 
 
+async def _require_tenants(session: AsyncSession, payer_id: Optional[int], participant_ids: list[int]) -> None:
+    """Payer and participants must be active tenants — a guest is never in a split."""
+    tenants = {m.id for m in await members_repo.list_active_tenants(session)}
+    if payer_id is not None and payer_id not in tenants:
+        raise Unprocessable("The payer must be an active tenant.")
+    if any(pid not in tenants for pid in participant_ids):
+        raise Unprocessable("Only active tenants can share an expense — guests can only be fined.")
+
+
 async def create_template(
     session: AsyncSession, *, actor, name: str, category: str, amount: int,
     default_payer_id: Optional[int], strategy: str, params: Optional[dict], participant_ids: list[int],
@@ -47,6 +56,7 @@ async def create_template(
     parts = list(dict.fromkeys(participant_ids))
     if not parts:
         raise Unprocessable("Choose at least one participant.")
+    await _require_tenants(session, default_payer_id, parts)
     compute_splits(strategy, amount, parts, params)  # fail fast on bad split inputs
     t = await expenses_repo.insert_template(
         session, name=name, category=category, amount=amount, default_payer_id=default_payer_id,
@@ -90,11 +100,14 @@ async def sweep_due(session: AsyncSession) -> list[int]:
         if t is None or not t.active or t.default_payer_id is None or not parts:
             continue
         try:
+            # Re-checked every month: someone demoted to guest (or gone) since the template
+            # was made must not be billed — pause and let a human fix the template.
+            await _require_tenants(session, t.default_payer_id, parts)
             owed = compute_splits(t.split_strategy, t.amount, parts, t.split_params)
         except Exception as exc:
             # Never silently skip a broken template (e.g. splits no longer total 100% after a
-            # member left). Pause it (so we don't retry-spam every sweep), log loudly, and
-            # notify the flat once — a human fixes the template and re-activates it.
+            # member left, or a participant is now a guest). Pause it (so we don't retry-spam
+            # every sweep), log loudly, and notify the flat once — a human fixes the template and re-activates it.
             logger.exception("Recurring %s (%s) failed to generate for %s", rec.id, t.name, month)
             rec.status = RecurringStatus.PAUSED
             recipients = await members_repo.list_active_tenants(session)

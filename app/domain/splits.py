@@ -4,7 +4,7 @@ Every strategy compiles a set of participants + a total into per-participant owe
 amounts that sum to *exactly* the total (delegating to `split_by_ratio`, so no rupee
 is lost). Adding a new strategy = one function + one registry entry; call sites never
 change. Weights/inputs come from the expense's own `params`, never from a member
-column, so a guest with no rent-share can still be a participant.
+column, so a tenant with no rent-share can still be a participant.
 """
 
 from __future__ import annotations

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import Unprocessable
 from app.db.models import LedgerEntry, Member
 from app.domain import permissions
-from app.domain.enums import LedgerEntryType, Permission
+from app.domain.enums import LedgerEntryType, Permission, Role
 from app.domain.money import rent_shares_set, split_by_ratio
 from app.repositories import ledger as ledger_repo
 from app.repositories import members as members_repo
@@ -52,14 +52,18 @@ async def add_charge(
 async def add_credit(
     session: AsyncSession, *, actor: Member, member_id: int, type: str, amount: int, reason: str
 ) -> LedgerEntry:
-    """Record money a member has paid (advance, or a payment toward their dues) — a credit."""
+    """Record money a member has paid (advance, or a payment toward their dues) — a credit.
+    Tenants only: advances, deposits and pot payouts are cost-sharing; a guest only has fines."""
     permissions.require(actor, Permission.MANAGE_USERS)
     if type not in _CREDIT_TYPES:
         raise Unprocessable(f"Credit type must be one of {sorted(_CREDIT_TYPES)}.")
     if amount <= 0:
         raise Unprocessable("Amount must be positive.")
-    if await members_repo.get(session, member_id) is None:
+    member = await members_repo.get(session, member_id)
+    if member is None:
         raise Unprocessable("No such member.")
+    if member.role != Role.TENANT:
+        raise Unprocessable("Only tenants can be credited — guests pay fines from the pay screen.")
     return await ledger_repo.add_entry(
         session, member_id=member_id, type=type, amount=amount, reason=reason, created_by=actor.id
     )

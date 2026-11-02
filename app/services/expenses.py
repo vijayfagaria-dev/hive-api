@@ -62,14 +62,14 @@ async def create_expense(
     if amount <= 0:
         raise Unprocessable("Amount must be positive.")
 
-    active = {m.id: m for m in await members_repo.list_active(session)}
+    active = {m.id: m for m in await members_repo.list_active_tenants(session)}
     if payer_id not in active:
-        raise Unprocessable("The payer must be an active member.")
+        raise Unprocessable("The payer must be an active tenant.")
     parts = list(dict.fromkeys(participant_ids))  # dedupe, preserve order
     if not parts:
         raise Unprocessable("Choose at least one person to share this with.")
     if any(pid not in active for pid in parts):
-        raise Unprocessable("Everyone sharing must be an active member.")
+        raise Unprocessable("Only active tenants can share an expense — guests can only be fined.")
 
     owed = compute_splits(strategy, amount, parts, params)  # SplitError -> HTTP 400
     weights = _weights_snapshot(strategy, params, parts)
@@ -115,10 +115,10 @@ async def edit_expense(
         raise Unprocessable(f"Unknown split strategy {strategy!r}.")
     if amount <= 0:
         raise Unprocessable("Amount must be positive.")
-    active = {m.id: m for m in await members_repo.list_active(session)}
+    active = {m.id: m for m in await members_repo.list_active_tenants(session)}
     parts = list(dict.fromkeys(participant_ids))
     if not parts or any(pid not in active for pid in parts):
-        raise Unprocessable("Everyone sharing must be an active member.")
+        raise Unprocessable("Only active tenants can share an expense — guests can only be fined.")
 
     owed = compute_splits(strategy, amount, parts, params)
     weights = _weights_snapshot(strategy, params, parts)
@@ -145,18 +145,19 @@ async def record_payment(
     """Record a real transfer (settling a member debt, or paying the house/landlord when
     to_id is null). Validated: positive amount, known method, active members, no
     self-payment, and a short-window duplicate guard so a double-submit can't fabricate
-    credit (the old route inserted with zero checks — a retry corrupted every balance)."""
+    credit (the old route inserted with zero checks — a retry corrupted every balance).
+    Tenants only: a guest's fine is paid through the fines flow, never a member transfer."""
     permissions.require(actor, Permission.SETTLE)
     if amount <= 0:
         raise Unprocessable("Amount must be positive.")
     if method not in _PAYMENT_METHODS:
         raise Unprocessable(f"Unknown payment method {method!r}.")
-    active = {m.id: m for m in await members_repo.list_active(session)}
+    active = {m.id: m for m in await members_repo.list_active_tenants(session)}
     if from_id not in active:
-        raise Unprocessable("The payer must be an active member.")
+        raise Unprocessable("The payer must be an active tenant (guests pay fines from the pay screen).")
     if to_id is not None:
         if to_id not in active:
-            raise Unprocessable("The payee must be an active member.")
+            raise Unprocessable("The payee must be an active tenant.")
         if to_id == from_id:
             raise DomainError("A payment can't be from and to the same person.")
     since = deadline_iso(now(), -1 / 60)  # 60-second double-submit window

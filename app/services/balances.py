@@ -45,9 +45,10 @@ async def net_for(session: AsyncSession, member: Member) -> dict:
 
 
 async def all_balances(session: AsyncSession) -> list[dict]:
-    """Net per active member, most-in-debt first — the 'who's up, who's down' board."""
+    """Net per active tenant, most-in-debt first — the 'who's up, who's down' board.
+    Guests aren't on it: they don't share costs (their fines live on the pay screen)."""
     rows = []
-    for m in await members_repo.list_active(session):
+    for m in await members_repo.list_active_tenants(session):
         n = await net_for(session, m)
         rows.append({"memberId": m.id, "name": m.name, "role": m.role, "net": n["net"]})
     return sorted(rows, key=lambda r: r["net"])
@@ -79,8 +80,8 @@ async def settle_net_for(session: AsyncSession, member: Member) -> int:
 
 
 async def settle_balances(session: AsyncSession) -> list[dict]:
-    """Peer-to-peer net per active member (the settle-up worklist input)."""
+    """Peer-to-peer net per active tenant (the settle-up worklist input)."""
     rows = []
-    for m in await members_repo.list_active(session):
+    for m in await members_repo.list_active_tenants(session):
         rows.append({"memberId": m.id, "name": m.name, "net": await settle_net_for(session, m)})
     return rows
