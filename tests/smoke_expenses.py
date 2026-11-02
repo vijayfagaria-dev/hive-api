@@ -116,6 +116,19 @@ async def main():
         assert open_txns, "close should persist proposed transfers"
         # mark the first proposed transfer paid -> writes a payment, flips status
         txn = open_txns[0]
+        # only the two people in a transfer can act on it (or record a payment between them)
+        outsider = next(m for m in (b, c, d) if m.id not in (txn.from_id, txn.to_id))
+        for attempt in (
+            lambda s: settle_up.mark_txn_paid(s, actor=outsider, txn_id=txn.id),
+            lambda s: settle_up.cancel_txn(s, actor=outsider, txn_id=txn.id),
+            lambda s: expenses.record_payment(s, actor=outsider, from_id=txn.from_id, to_id=txn.to_id, amount=10),
+        ):
+            async with session_scope() as s:
+                try:
+                    await attempt(s); assert False
+                except Forbidden:
+                    pass
+        print("ok ownership: an outsider can't mark/cancel a transfer or record a payment for others")
         before = (await net(txn.from_id))["net"]
         async with session_scope() as s:
             await settle_up.mark_txn_paid(s, actor=a, txn_id=txn.id)
@@ -156,10 +169,19 @@ async def main():
                 strategy="equal", params=None, participant_ids=[a.id, b.id, c.id, d.id], incurred_on="2026-07-05",
             )
         d_before = (await net(d.id))["net"]
-        # edit: raise to ₹800, split among only A & D
+        # edit: only the payer (D) may — A is refused
+        async with session_scope() as s:
+            try:
+                await expenses.edit_expense(
+                    s, actor=a, expense_id=eid2, amount=1, category="maintenance", description=None,
+                    strategy="equal", params=None, participant_ids=[a.id],
+                ); assert False
+            except Forbidden:
+                pass
+        # D raises it to ₹800, split among only A & D
         async with session_scope() as s:
             await expenses.edit_expense(
-                s, actor=a, expense_id=eid2, amount=800, category="maintenance", description="cylinder x2",
+                s, actor=d, expense_id=eid2, amount=800, category="maintenance", description="cylinder x2",
                 strategy="equal", params=None, participant_ids=[a.id, d.id],
             )
         async with session_scope() as s:

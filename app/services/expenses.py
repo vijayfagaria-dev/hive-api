@@ -102,11 +102,14 @@ async def edit_expense(
     description: Optional[str], strategy: str, params: Optional[dict], participant_ids: list[int],
 ) -> None:
     """Re-cost an expense: re-run the strategy, replace the split snapshot, audit it.
-    Balances recompute automatically (they're derived); settlement history is preserved."""
+    Balances recompute automatically (they're derived); settlement history is preserved.
+    Only the person who paid can edit it."""
     permissions.require(actor, Permission.EDIT_EXPENSE)
     exp = await expenses_repo.get(session, expense_id)
     if exp is None:
         raise NotFound("No such expense.")
+    if exp.payer_id != actor.id:
+        raise Forbidden("Only the person who paid can edit this expense.")
     if exp.status == ExpenseStatus.VOID:
         raise DomainError("Can't edit a deleted expense.")
     if category not in _CATEGORIES:
@@ -146,8 +149,11 @@ async def record_payment(
     to_id is null). Validated: positive amount, known method, active members, no
     self-payment, and a short-window duplicate guard so a double-submit can't fabricate
     credit (the old route inserted with zero checks — a retry corrupted every balance).
-    Tenants only: a guest's fine is paid through the fines flow, never a member transfer."""
+    Tenants only: a guest's fine is paid through the fines flow, never a member transfer.
+    Only a party to the payment (payer or payee) can record it."""
     permissions.require(actor, Permission.SETTLE)
+    if actor.id not in (from_id, to_id):
+        raise Forbidden("You can only record a payment you made or received.")
     if amount <= 0:
         raise Unprocessable("Amount must be positive.")
     if method not in _PAYMENT_METHODS:

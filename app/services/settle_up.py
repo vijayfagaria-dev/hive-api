@@ -17,13 +17,19 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import DomainError, NotFound, Unprocessable
+from app.core.errors import DomainError, Forbidden, NotFound, Unprocessable
 from app.domain import permissions
 from app.domain.enums import Permission
 from app.domain.settle import simplify
 from app.repositories import expenses as expenses_repo
 from app.repositories import members as members_repo
 from app.services import balances, notifications
+
+
+def _require_party(actor, txn) -> None:
+    """Only the two people in a transfer (who pays, who's paid) can act on it."""
+    if actor.id not in (txn.from_id, txn.to_id):
+        raise Forbidden("Only the two people in this transfer can update it.")
 
 
 async def preview(session: AsyncSession) -> dict:
@@ -97,6 +103,7 @@ async def mark_txn_paid(
     txn = await expenses_repo.get_settle_txn(session, txn_id)
     if txn is None:
         raise NotFound("No such transfer.")
+    _require_party(actor, txn)
     if txn.status != "proposed":
         raise DomainError("That transfer is already settled or cancelled.")
 
@@ -131,6 +138,7 @@ async def cancel_txn(session: AsyncSession, *, actor, txn_id: int) -> dict:
     txn = await expenses_repo.get_settle_txn(session, txn_id)
     if txn is None:
         raise NotFound("No such transfer.")
+    _require_party(actor, txn)
     if txn.status != "proposed":
         raise DomainError("Only a proposed transfer can be cancelled.")
     txn.status = "cancelled"
