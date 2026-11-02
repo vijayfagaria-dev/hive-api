@@ -22,7 +22,8 @@ from app.core.errors import install_exception_handlers
 from app.core.logging import configure_logging
 from app.db import session as db
 from app.db.seed import seed_if_empty
-from app.services import billing, complaints, notifications, proposals, recurring
+from app.infra import mailer
+from app.services import billing, complaints, notifications, otp, proposals, recurring
 
 logger = logging.getLogger("hive")
 
@@ -40,6 +41,7 @@ async def _sweep_loop() -> None:
                 closed = await proposals.sweep_due(session)
                 bills_confirmed = await billing.sweep_due(session)
                 recurring_made = await recurring.sweep_due(session)
+                await otp.purge(session)
             if promoted:
                 logger.info("Sweep confirmed %d complaint(s): %s", len(promoted), promoted)
             if finalized:
@@ -87,6 +89,10 @@ async def lifespan(app: FastAPI):
             "SECRET_KEY (session signing) is unset/default - set a random SECRET_KEY "
             "before exposing logins; sessions are forgeable otherwise."
         )
+    if not settings.email_enabled:
+        logger.warning(
+            "SMTP not configured - signup/reset codes are logged instead of emailed (dev only)."
+        )
     if not settings.push_enabled:
         logger.info("Web Push disabled (no VAPID keys) - notifications go in-app + email/WhatsApp.")
     tasks = [asyncio.create_task(_sweep_loop()), asyncio.create_task(_notify_dispatch_loop())]
@@ -100,6 +106,7 @@ async def lifespan(app: FastAPI):
                 await task
             except asyncio.CancelledError:
                 pass
+        await mailer.drain()
         await db.dispose()
 
 
@@ -109,7 +116,7 @@ def create_app() -> FastAPI:
         SessionMiddleware,
         secret_key=settings.secret_key,
         session_cookie="hive_session",
-        max_age=60 * 60 * 24 * 30,
+        max_age=60 * 60 * 24 * settings.session_max_age_days,
         same_site="lax",
         https_only=settings.cookie_secure,
     )

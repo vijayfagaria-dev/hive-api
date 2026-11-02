@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ["DATABASE_PATH"] = os.path.join(tempfile.gettempdir(), f"hive_members_{uuid.uuid4().hex}.db")
 os.environ["SECRET_KEY"] = "testsecret"
 os.environ["INVITE_MAX_PER_DAY"] = "100"  # don't let the rate-limit block the test
+os.environ["RATE_LIMIT_ENABLED"] = "false"  # many signups from one test client
 os.environ.pop("TELEGRAM_BOT_TOKEN", None)
 
 from app.core.errors import DomainError  # noqa: E402
@@ -22,6 +23,7 @@ from app.domain import permissions  # noqa: E402
 from app.repositories import members as members_repo  # noqa: E402
 from app.services import accounts  # noqa: E402
 from app.services import members as members_svc  # noqa: E402
+from mailbox import Mailbox, signup  # noqa: E402
 
 
 async def set_role(username: str, role: str):
@@ -71,12 +73,13 @@ def main():
     from fastapi.testclient import TestClient
     from app.main import app
 
+    box = Mailbox.install()
     with TestClient(app) as c:
         # owner self-registers (guest), then is promoted to tenant out-of-band
-        owner_id = c.post("/api/auth/register", json={"username": "owner", "password": "ownerpw1"}).json()["member"]["id"]
+        owner_id = signup(c, box, "owner", "keys-pw-01").json()["member"]["id"]
         asyncio.run(set_role("owner", "tenant"))
         # tess self-registers (guest) — session is now tess
-        tess_id = c.post("/api/auth/register", json={"username": "tess", "password": "tesspw12"}).json()["member"]["id"]
+        tess_id = signup(c, box, "tess", "fern-pw-12").json()["member"]["id"]
 
         # --- Permission gating: a guest may VIEW but not MANAGE ---
         r = c.get("/api/household/members")
@@ -87,7 +90,7 @@ def main():
         print("ok guest can view the roster but cannot invite / remove / change roles (403)")
 
         # --- Tenant (admin) role management ---
-        c.post("/api/auth/login", json={"username": "owner", "password": "ownerpw1"})
+        c.post("/api/auth/login", json={"username": "owner", "password": "keys-pw-01"})
         assert c.post(f"/api/household/members/{tess_id}/role", json={"role": "wizard"}).status_code == 422
         assert c.post("/api/household/members/999999/role", json={"role": "tenant"}).status_code == 404
         promoted = c.post(f"/api/household/members/{tess_id}/role", json={"role": "tenant"})
@@ -110,44 +113,45 @@ def main():
         prev = c.get(f"/api/household/invites/{inv['token']}").json()
         assert prev["role"] == "guest" and prev["invitedBy"] == "owner"
         # redeem (this registration switches the session to the new member)
-        reg = c.post("/api/auth/register", json={"username": "newbie", "password": "newbpw12", "invite": inv["token"]})
+        reg = signup(c, box, "newbie", "pebble-pw-12", invite=inv["token"])
         assert reg.status_code == 200 and reg.json()["member"]["role"] == "guest" and reg.json()["member"]["name"] == "Newbie"
         # single-use: reusing the token fails
-        assert c.post("/api/auth/register", json={"username": "nb2", "password": "newbpw12", "invite": inv["token"]}).status_code == 400
+        assert c.post("/api/auth/register", json={"username": "nb2", "password": "pebble-pw-12", "email": "nb2@example.com", "invite": inv["token"]}).status_code == 400
         print("ok invite redeemed at invited role+name; public preview; single-use (reuse 400)")
 
         # inviter is notified + the invite is no longer pending
-        c.post("/api/auth/login", json={"username": "owner", "password": "ownerpw1"})
+        c.post("/api/auth/login", json={"username": "owner", "password": "keys-pw-01"})
         assert any(n["kind"] == "member_invite_accepted" for n in c.get("/api/notifications").json()["notifications"])
         assert len(c.get("/api/household/invites").json()["invitations"]) == 0
         print("ok inviter notified on accept; accepted invite drops out of pending")
 
         # invite can grant tenant on join
         t2 = c.post("/api/household/members/invite", json={"role": "tenant"}).json()["invitation"]["token"]
-        assert c.post("/api/auth/register", json={"username": "cofounder", "password": "cofopw12", "invite": t2}).json()["member"]["role"] == "tenant"
+        assert signup(c, box, "cofounder", "atlas-pw-12", invite=t2).json()["member"]["role"] == "tenant"
         print("ok invite can grant the tenant role on join")
 
         # revoke + expiry redemption guards
-        c.post("/api/auth/login", json={"username": "owner", "password": "ownerpw1"})
+        c.post("/api/auth/login", json={"username": "owner", "password": "keys-pw-01"})
         rinv = c.post("/api/household/members/invite", json={"role": "guest"}).json()["invitation"]
         assert c.post(f"/api/household/invites/{rinv['id']}/revoke").json()["ok"] is True
-        assert c.post("/api/auth/register", json={"username": "ghost", "password": "ghostpw1", "invite": rinv["token"]}).status_code == 400
+        assert c.post("/api/auth/register", json={"username": "ghost", "password": "mist-pw-01", "email": "ghost@example.com", "invite": rinv["token"]}).status_code == 400
         einv = c.post("/api/household/members/invite", json={"role": "guest"}).json()["invitation"]
         asyncio.run(expire_invite(einv["id"]))
-        assert c.post("/api/auth/register", json={"username": "late", "password": "latepw12", "invite": einv["token"]}).status_code == 400
+        assert c.post("/api/auth/register", json={"username": "late", "password": "dusk-pw-12", "email": "late@example.com", "invite": einv["token"]}).status_code == 400
         print("ok revoked + expired invites are rejected on redeem (400)")
 
         # --- Removal (soft-delete) locks the member out ---
-        c.post("/api/auth/login", json={"username": "owner", "password": "ownerpw1"})
+        c.post("/api/auth/login", json={"username": "owner", "password": "keys-pw-01"})
         assert c.delete(f"/api/household/members/{tess_id}").status_code == 200  # tess is one of several tenants
         assert not any(m["id"] == tess_id for m in c.get("/api/household/members").json()["members"])
-        # a removed member's session no longer authorizes
-        c.post("/api/auth/login", json={"username": "tess", "password": "tesspw12"})
+        # a removed member can't log back in (and gets no session)
+        c.post("/api/auth/logout")
+        assert c.post("/api/auth/login", json={"username": "tess", "password": "fern-pw-12"}).status_code == 403
         assert c.get("/api/household/members").status_code == 401
-        print("ok remove -> soft-deleted, dropped from roster, session no longer authorizes")
+        print("ok remove -> soft-deleted, dropped from roster, login refused")
 
         # admin can see departed members with includeInactive
-        c.post("/api/auth/login", json={"username": "owner", "password": "ownerpw1"})
+        c.post("/api/auth/login", json={"username": "owner", "password": "keys-pw-01"})
         assert any(m["id"] == tess_id and m["isActive"] is False for m in c.get("/api/household/members?includeInactive=true").json()["members"])
         print("ok includeInactive surfaces removed members to admins")
 

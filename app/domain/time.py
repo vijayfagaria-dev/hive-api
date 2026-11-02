@@ -25,3 +25,18 @@ def deadline_iso(base: datetime, hours: int) -> str:
     """ISO timestamp = base + hours (negative hours -> a past cutoff). Pass the
     SAME base used for a row's `ts` so a deadline is exactly ts + hours."""
     return iso(base + timedelta(hours=hours))
+
+
+def shift_iso(base: datetime, seconds: int) -> str:
+    """ISO timestamp = base + seconds — for the sub-hour windows (OTP expiry, lockouts)."""
+    return iso(base + timedelta(seconds=seconds))
+
+
+def parse_iso(value: str) -> datetime:
+    """Inverse of `iso` (the stored 'YYYY-MM-DDTHH:MM:SSZ' TEXT form)."""
+    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+
+
+def seconds_until(value: str, base: datetime) -> int:
+    """Whole seconds from `base` until the ISO timestamp `value` (0 if already past)."""
+    return max(0, int((parse_iso(value) - base).total_seconds()))

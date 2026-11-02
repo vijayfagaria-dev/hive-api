@@ -1,8 +1,9 @@
 """Invitations — a member with INVITE_MEMBER mints a single-use link for someone
 to join the household at a chosen role.
 
-create() returns a token (the shareable link); accept() redeems it at registration,
-creating the member at the invited role instead of the default guest. Pending
+create() returns a token (the shareable link); signup redeems it (see
+services.verification), creating the member at the invited role instead of the
+default guest. Pending
 invites expire after a configurable window and are rate-limited per inviter.
 """
 
@@ -23,7 +24,7 @@ from app.domain.time import deadline_iso, now, now_iso
 from app.repositories import invitations as invitations_repo
 from app.repositories import member_events as events_repo
 from app.repositories import members as members_repo
-from app.services import accounts, notifications
+from app.services import notifications
 
 _VALID_ROLES = {Role.TENANT.value, Role.GUEST.value}
 
@@ -77,21 +78,21 @@ async def revoke(session: AsyncSession, *, actor: Member, invitation_id: int) ->
     return inv
 
 
-async def accept(session: AsyncSession, *, token: str, username: str, password: str) -> Member:
-    """Redeem an invite during registration: create the member at the invited role."""
+async def redeemable(session: AsyncSession, token: str) -> Invitation:
+    """The pending invite behind `token`, or raise why it can't be redeemed. Checked
+    when a signup starts and again when its email code is verified."""
     inv = await invitations_repo.get_by_token(session, token)
     if inv is None:
         raise NotFound("That invite link is invalid.")
     if inv.status != InvitationStatus.PENDING:
         raise DomainError("That invite has already been used or revoked.")
     if now_iso() >= inv.expires_at:
-        inv.status = InvitationStatus.EXPIRED
         raise DomainError("That invite link has expired.")
+    return inv
 
-    member = await accounts.register_with_role(
-        session, username=username, password=password,
-        role=inv.role, name=inv.name, email=inv.email,
-    )
+
+async def mark_accepted(session: AsyncSession, inv: Invitation, member: Member) -> None:
+    """Close out a redeemed invite for the member it created (+ audit + ping the inviter)."""
     inv.status = InvitationStatus.ACCEPTED
     inv.accepted_by = member.id
     inv.accepted_at = now_iso()
@@ -102,4 +103,3 @@ async def accept(session: AsyncSession, *, token: str, username: str, password: 
     inviter = await members_repo.get(session, inv.invited_by)
     if inviter is not None and inviter.is_active:
         await notifications.invite_accepted(session, inviter=inviter, who=member.name)
-    return member

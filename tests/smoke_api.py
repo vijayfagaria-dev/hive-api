@@ -15,13 +15,16 @@ os.environ["DATABASE_PATH"] = os.path.join(tempfile.gettempdir(), f"hive_api_{uu
 os.environ["WEBHOOK_SECRET"] = "testsecret"
 os.environ["PROOF_STORAGE_DIR"] = os.path.join(tempfile.gettempdir(), f"hive_proofs_{uuid.uuid4().hex}")
 os.environ["DUPLICATE_WINDOW_HOURS"] = "0"   # don't let dedupe block test repeats
+os.environ["RATE_LIMIT_ENABLED"] = "false"  # many signups from one test client
 os.environ.pop("TELEGRAM_BOT_TOKEN", None)
 
 from app.db.session import create_all, session_scope  # noqa: E402
 from app.repositories import members as members_repo  # noqa: E402
 from app.repositories import rules as rules_repo  # noqa: E402
 from app.services import accounts, complaints  # noqa: E402
+from mailbox import Mailbox, signup  # noqa: E402
 
+PASSWORDS = {"alice": "orbit-pw-123", "bob": "maple-pw-123", "carol": "comet-pw-123"}
 KITCHEN = "KITCHEN_API_dishes"
 NOISE = "NOISE_API_loud"
 # A 1x1 JPEG-ish blob is enough — the API only checks content-type + size, never decodes.
@@ -54,21 +57,26 @@ def main():
     from fastapi.testclient import TestClient
     from app.main import app
 
+    box = Mailbox.install()
     with TestClient(app) as c:
         assert c.get("/api/auth/me").json()["member"] is None
         print("ok /api/auth/me is null when logged out")
 
         # Validation
-        assert c.post("/api/auth/register", json={"username": "ab", "password": "secret123"}).status_code == 422
-        assert c.post("/api/auth/register", json={"username": "zoe", "password": "x"}).status_code == 422
+        mail = {"email": "zoe@example.com"}
+        assert c.post("/api/auth/register", json={"username": "ab", "password": "lime-tree-41", **mail}).status_code == 422
+        assert c.post("/api/auth/register", json={"username": "zoe", "password": "x", **mail}).status_code == 422
+        assert c.post("/api/auth/register", json={"username": "zoe", "password": "lime-tree-41"}).status_code == 422
 
-        # Register -> guest + session
-        r = c.post("/api/auth/register", json={"username": "zoe", "password": "zoepw123"})
+        # Register (verified by emailed code) -> guest + session
+        r = signup(c, box, "zoe", "lime-tree-41")
         assert r.status_code == 200 and r.json()["member"]["role"] == "guest"
+        assert r.json()["member"]["emailVerified"] is True
         assert c.get("/api/auth/me").json()["member"]["username"] == "zoe"
-        print("ok register -> guest + session authenticates /api/auth/me")
+        print("ok register -> verify code -> guest + session authenticates /api/auth/me")
 
-        assert c.post("/api/auth/register", json={"username": "ZOE", "password": "zoepw123"}).status_code == 409
+        dup = {"username": "ZOE", "password": "lime-tree-41", "email": "zoe2@example.com"}
+        assert c.post("/api/auth/register", json=dup).status_code == 409
         print("ok duplicate username -> 409")
 
         # Guest can't see the dashboard
@@ -149,12 +157,12 @@ def main():
         # --- Full complaint workflow: accept, dispute->vote, notifications, proof
         ids = {}
         for name in ("alice", "bob", "carol"):
-            r = c.post("/api/auth/register", json={"username": name, "password": name + "pw123"})
-            assert r.status_code == 200
+            r = signup(c, box, name, PASSWORDS[name])
+            assert r.status_code == 200, r.text
             ids[name] = r.json()["member"]["id"]
 
         # alice files about bob, with proof
-        c.post("/api/auth/login", json={"username": "alice", "password": "alicepw123"})
+        c.post("/api/auth/login", json={"username": "alice", "password": PASSWORDS["alice"]})
         filed = c.post(
             "/api/complaints", data={"accusedId": ids["bob"], "ruleId": s["krule"]},
             files={"images": ("a.jpg", FAKE_JPEG, "image/jpeg")},
@@ -173,7 +181,7 @@ def main():
         print("ok proof image served to a logged-in member")
 
         # bob accepts -> registered, no vote
-        c.post("/api/auth/login", json={"username": "bob", "password": "bobpw123"})
+        c.post("/api/auth/login", json={"username": "bob", "password": PASSWORDS["bob"]})
         d_bob = c.get(f"/api/complaints/{cid}").json()
         assert d_bob["canAccept"] is True and d_bob["canDispute"] is True
         assert c.post(f"/api/complaints/{cid}/accept").json()["accepted"] is True
@@ -183,17 +191,17 @@ def main():
         print("ok accused accepts -> registered; accused has an in-app notification")
 
         # alice files again (different rule), bob disputes -> voting; carol votes
-        c.post("/api/auth/login", json={"username": "alice", "password": "alicepw123"})
+        c.post("/api/auth/login", json={"username": "alice", "password": PASSWORDS["alice"]})
         noise_id = c.get("/api/me").json()["rulesByCategory"]["noise"][0]["id"]
         cid2 = c.post(
             "/api/complaints", data={"accusedId": ids["bob"], "ruleId": noise_id},
             files={"images": ("b.jpg", FAKE_JPEG, "image/jpeg")},
         ).json()["complaintId"]
         assert c.post(f"/api/complaints/{cid2}/dispute", json={}).status_code == 403  # accuser can't
-        c.post("/api/auth/login", json={"username": "bob", "password": "bobpw123"})
+        c.post("/api/auth/login", json={"username": "bob", "password": PASSWORDS["bob"]})
         assert c.post(f"/api/complaints/{cid2}/dispute", json={"reason": "wasn't me"}).json()["votingOpened"] is True
         assert c.get(f"/api/complaints/{cid2}").json()["phase"] == "voting"
-        c.post("/api/auth/login", json={"username": "carol", "password": "carolpw123"})
+        c.post("/api/auth/login", json={"username": "carol", "password": PASSWORDS["carol"]})
         v = c.post(f"/api/complaints/{cid2}/vote", json={"vote": "uphold"}).json()
         assert v["tally"]["uphold"] == 1 and v["status"] == "disputed"
         assert any(n["kind"] == "vote_requested" for n in c.get("/api/notifications").json()["notifications"])
@@ -204,7 +212,7 @@ def main():
 
         # --- v4 notification channels: Web Push + email config ---
         assert c.get("/api/push/public-key").json()["key"] is None  # VAPID unconfigured in tests
-        c.post("/api/auth/login", json={"username": "bob", "password": "bobpw123"})
+        c.post("/api/auth/login", json={"username": "bob", "password": PASSWORDS["bob"]})
         sub = {"endpoint": "https://push.example/abc", "keys": {"p256dh": "BKtest", "auth": "atest"}}
         assert c.post("/api/push/subscribe", json=sub).json()["ok"] is True
         assert c.post("/api/push/unsubscribe", json={"endpoint": sub["endpoint"]}).json()["ok"] is True
@@ -224,11 +232,11 @@ def main():
         print("ok own contacts visible to self; others' contacts not leaked")
 
         # --- bills (tenant-only; replaces the retired bot /bill) ---
-        c.post("/api/auth/login", json={"username": "zoe", "password": "zoepw123"})  # zoe is a tenant
+        c.post("/api/auth/login", json={"username": "zoe", "password": "lime-tree-41"})  # zoe is a tenant
         bill = c.post("/api/bills", json={"type": "electricity", "total": 900, "month": "2026-06"})
         assert bill.status_code == 200 and bill.json()["billId"]
         assert c.post("/api/bills", json={"type": "nonsense", "total": 10, "month": "2026-06"}).status_code == 422
-        c.post("/api/auth/login", json={"username": "bob", "password": "bobpw123"})  # guest
+        c.post("/api/auth/login", json={"username": "bob", "password": PASSWORDS["bob"]})  # guest
         assert c.post("/api/bills", json={"type": "water", "total": 100, "month": "2026-06"}).status_code == 403
         print("ok bill create is tenant-only; bad type -> 422; guest -> 403")
 

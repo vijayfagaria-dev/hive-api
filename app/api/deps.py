@@ -33,12 +33,16 @@ __all__ = [
 async def current_member(
     request: Request, session: AsyncSession = Depends(get_session)
 ) -> Optional[Member]:
-    """The logged-in active member, or None (for role-aware public endpoints)."""
+    """The logged-in active member, or None (for role-aware public endpoints).
+    A cookie minted before the member's last session-version bump (password change,
+    reset, "log out everywhere") no longer authenticates."""
     member_id = security.session_member_id(request)
     if member_id is None:
         return None
     member = await members_repo.get(session, member_id)
     if member is None or not member.is_active:
+        return None
+    if security.session_version(request) != member.session_version:
         return None
     return member
 

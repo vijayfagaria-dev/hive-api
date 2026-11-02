@@ -24,6 +24,27 @@ async def get_by_username(session: AsyncSession, username: str) -> Optional[Memb
     )
 
 
+async def list_active_by_email(session: AsyncSession, email: str) -> list[Member]:
+    """Active members with this email (case-insensitive). Legacy data may hold
+    duplicates; new addresses are kept unique by the accounts service."""
+    return list(
+        await session.scalars(
+            select(Member).where(
+                Member.is_active.is_(True), func.lower(Member.email) == func.lower(email)
+            )
+        )
+    )
+
+
+async def email_in_use(session: AsyncSession, email: str, *, exclude_id: Optional[int] = None) -> bool:
+    stmt = select(Member.id).where(
+        Member.is_active.is_(True), func.lower(Member.email) == func.lower(email)
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(Member.id != exclude_id)
+    return (await session.scalar(stmt.limit(1))) is not None
+
+
 async def list_active(session: AsyncSession) -> list[Member]:
     return list(
         await session.scalars(

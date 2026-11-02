@@ -22,7 +22,16 @@ class Member(Base):
     username: Mapped[Optional[str]] = mapped_column(String)        # web login; unique via lower() index
     password_hash: Mapped[Optional[str]] = mapped_column(String)  # bcrypt; NULL until set
     email: Mapped[Optional[str]] = mapped_column(String)          # email notification channel
+    # When the current email was proven by a one-time code. Null for legacy addresses
+    # entered before verification existed (still usable for notifications + reset).
+    email_verified_at: Mapped[Optional[str]] = mapped_column(String)
     whatsapp: Mapped[Optional[str]] = mapped_column(String)       # E.164; WhatsApp channel
+    # Mirrored into the login cookie; bumping it signs out every other session
+    # (password change/reset, "log out everywhere").
+    session_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # Login brute-force guard: consecutive wrong passwords, and the lock they trigger.
+    failed_logins: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    locked_until: Mapped[Optional[str]] = mapped_column(String)
     role: Mapped[str] = mapped_column(String, nullable=False, default=Role.TENANT)
     # Rent split share (%), tenants only. The active tenants' shares sum to 100.
     # Null = not configured -> rent falls back to an equal split.

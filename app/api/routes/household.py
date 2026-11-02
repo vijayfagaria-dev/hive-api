@@ -143,6 +143,7 @@ async def preview_invite(token: str, session: AsyncSession = Depends(get_session
     return {
         "role": inv.role,
         "name": inv.name,
+        "email": inv.email,  # prefills the join form (the link holder is the invitee)
         "invitedBy": inviter.name if inviter else None,
         "expiresAt": inv.expires_at,
     }

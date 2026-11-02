@@ -8,13 +8,27 @@ from pydantic import BaseModel, Field
 
 
 class Credentials(BaseModel):
-    username: str = Field(min_length=1)
-    password: str = Field(min_length=1)
-    # Optional contact channels; used on register, ignored on login.
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=256)
+    # Contact channels; email is required on register (it gets verified), ignored on login.
     email: Optional[str] = Field(default=None, max_length=254)
     whatsapp: Optional[str] = Field(default=None, max_length=24)
     # Optional invite token; on register, redeems the invite (joins at its role).
     invite: Optional[str] = Field(default=None, max_length=128)
+
+
+class EmailOnly(BaseModel):
+    email: str = Field(min_length=1, max_length=254)
+
+
+class EmailCode(BaseModel):
+    email: str = Field(min_length=1, max_length=254)
+    code: str = Field(min_length=1, max_length=16)
+
+
+class PasswordResetBody(BaseModel):
+    resetToken: str = Field(min_length=1, max_length=128)
+    newPassword: str = Field(min_length=1, max_length=256)
 
 
 class EmailBody(BaseModel):
@@ -26,8 +40,8 @@ class WhatsappBody(BaseModel):
 
 
 class PasswordChangeBody(BaseModel):
-    currentPassword: str = Field(min_length=1)
-    newPassword: str = Field(min_length=1, max_length=128)
+    currentPassword: str = Field(min_length=1, max_length=256)
+    newPassword: str = Field(min_length=1, max_length=256)
 
 
 def member_out(member) -> Optional[dict]:
@@ -46,4 +60,15 @@ def self_out(member) -> Optional[dict]:
     """The logged-in member's own view — adds private contact fields."""
     if member is None:
         return None
-    return {**member_out(member), "email": member.email, "whatsapp": member.whatsapp}
+    return {
+        **member_out(member),
+        "email": member.email,
+        "emailVerified": bool(member.email and member.email_verified_at),
+        "whatsapp": member.whatsapp,
+    }
+
+
+def challenge_out(challenge, timers: dict) -> dict:
+    """A code is on its way: where (signup/email change echo the address the user
+    typed) and the countdowns for the OTP screen."""
+    return {"email": challenge.email, **timers}

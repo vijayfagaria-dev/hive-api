@@ -276,3 +276,11 @@ class InvitationStatus(StrEnum):
     ACCEPTED = "accepted"
     REVOKED = "revoked"
     EXPIRED = "expired"
+
+
+# --- Auth: one-time email codes ---------------------------------------------
+
+class OtpPurpose(StrEnum):
+    REGISTER = "register"              # verify the email before the account exists
+    PASSWORD_RESET = "password_reset"  # prove the inbox to set a new password
+    CHANGE_EMAIL = "change_email"      # confirm a new address before it replaces the old

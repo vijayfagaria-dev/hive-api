@@ -1,18 +1,29 @@
-"""Account routes — the member's own notification channels (email, WhatsApp, push) + password."""
+"""Account routes — the member's own notification channels (email, WhatsApp, push) + password.
+
+Email changes are verified by a one-time code to the new address before they apply."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import Request
 
 from app.api.deps import get_session, require_login
+from app.core import ratelimit, security
 from app.core.config import settings
 from app.core.errors import DomainError
 from app.repositories import devices as devices_repo
 from app.repositories import push as push_repo
-from app.schemas.accounts import EmailBody, PasswordChangeBody, WhatsappBody
+from app.schemas.accounts import (
+    EmailBody,
+    EmailCode,
+    EmailOnly,
+    PasswordChangeBody,
+    WhatsappBody,
+    challenge_out,
+)
 from app.schemas.push import PushSubscribeBody, PushUnsubscribeBody
-from app.services import accounts
+from app.services import accounts, otp, verification
 
 _PUSH_PROVIDERS = {"webpush", "fcm", "apns"}
 _PUSH_PLATFORMS = {"web", "android", "ios"}
@@ -20,12 +31,39 @@ _PUSH_PLATFORMS = {"web", "android", "ios"}
 router = APIRouter(tags=["account"])
 
 
-@router.post("/account/email")
+def _email_state(member, challenge=None) -> dict:
+    return {
+        "ok": True,
+        "email": member.email,
+        "emailVerified": bool(member.email and member.email_verified_at),
+        "pending": challenge_out(challenge, otp.timers(challenge)) if challenge else None,
+    }
+
+
+@router.post("/account/email", dependencies=[Depends(ratelimit.otp_request_limiter.dependency())])
 async def set_email(
     body: EmailBody, session: AsyncSession = Depends(get_session), member=Depends(require_login)
 ):
-    email = await accounts.set_email(session, member, body.email)
-    return {"ok": True, "email": email}
+    """Empty clears the email. A new (or unverified) address is mailed a code and
+    only takes effect after /account/email/verify — `pending` carries the countdowns."""
+    challenge = await verification.start_email_change(session, member, body.email)
+    return _email_state(member, challenge)
+
+
+@router.post("/account/email/resend", dependencies=[Depends(ratelimit.otp_request_limiter.dependency())])
+async def resend_email_code(
+    body: EmailOnly, session: AsyncSession = Depends(get_session), member=Depends(require_login)
+):
+    challenge = await verification.resend_email_change(session, member, body.email)
+    return _email_state(member, challenge)
+
+
+@router.post("/account/email/verify", dependencies=[Depends(ratelimit.otp_verify_limiter.dependency())])
+async def verify_email_code(
+    body: EmailCode, session: AsyncSession = Depends(get_session), member=Depends(require_login)
+):
+    await verification.complete_email_change(session, member, email=body.email, code=body.code)
+    return _email_state(member)
 
 
 @router.post("/account/whatsapp")
@@ -38,9 +76,15 @@ async def set_whatsapp(
 
 @router.post("/account/password")
 async def change_password(
-    body: PasswordChangeBody, session: AsyncSession = Depends(get_session), member=Depends(require_login)
+    body: PasswordChangeBody,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    member=Depends(require_login),
 ):
+    """Other devices are signed out; this one gets a fresh cookie and stays in."""
     await accounts.change_password(session, member, body.currentPassword, body.newPassword)
+    security.login_session(request, member.id, member.session_version)
+    verification.notify_password_changed(session, member, how="changed")
     return {"ok": True}
 
 

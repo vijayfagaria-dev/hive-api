@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
+from app.core.errors import AppError
 from app.db.base import Base
 from app.db import models  # noqa: F401  (registers tables on Base.metadata)
 
@@ -42,14 +43,22 @@ def _set_sqlite_pragmas(dbapi_connection, _record) -> None:
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 
+async def _finish_failed(session: AsyncSession, exc: Exception) -> None:
+    """Roll back — unless the error asked to keep its writes (AppError(persist=True))."""
+    if isinstance(exc, AppError) and exc.persist:
+        await session.commit()
+    else:
+        await session.rollback()
+
+
 async def get_session() -> AsyncIterator[AsyncSession]:
     """FastAPI dependency: a request-scoped session, committed on success."""
     async with SessionLocal() as session:
         try:
             yield session
             await session.commit()
-        except Exception:
-            await session.rollback()
+        except Exception as exc:
+            await _finish_failed(session, exc)
             raise
 
 
@@ -60,8 +69,8 @@ async def session_scope() -> AsyncIterator[AsyncSession]:
         try:
             yield session
             await session.commit()
-        except Exception:
-            await session.rollback()
+        except Exception as exc:
+            await _finish_failed(session, exc)
             raise
 
 

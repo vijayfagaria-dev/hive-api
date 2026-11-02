@@ -40,6 +40,25 @@ class Settings:
     # Send the session cookie only over HTTPS. Off by default so http://localhost
     # dev works; set COOKIE_SECURE=true in production (behind TLS).
     cookie_secure: bool = os.getenv("COOKIE_SECURE", "").strip().lower() in ("1", "true", "yes")
+    # How long a login cookie lives. Password changes and "log out everywhere" revoke
+    # older sessions early via the member's session_version.
+    session_max_age_days: int = _int("SESSION_MAX_AGE_DAYS", 30)
+
+    # --- Auth hardening ---
+    # One-time email codes (signup verification, password reset, email change).
+    otp_ttl_minutes: int = _int("OTP_TTL_MINUTES", 10)
+    otp_resend_cooldown_seconds: int = _int("OTP_RESEND_COOLDOWN_SECONDS", 60)
+    otp_max_attempts: int = _int("OTP_MAX_ATTEMPTS", 5)
+    # Cap on codes sent to one address per purpose in a rolling hour (anti mail-bombing).
+    otp_max_sends_per_hour: int = _int("OTP_MAX_SENDS_PER_HOUR", 5)
+    # A verified reset code is exchanged for a short-lived, single-use reset token.
+    reset_token_ttl_minutes: int = _int("RESET_TOKEN_TTL_MINUTES", 15)
+    # Consecutive wrong passwords before the account is locked for a while.
+    login_max_failures: int = _int("LOGIN_MAX_FAILURES", 5)
+    login_lockout_minutes: int = _int("LOGIN_LOCKOUT_MINUTES", 15)
+    password_min_length: int = _int("PASSWORD_MIN_LENGTH", 8)
+    # Per-IP throttling of the public auth endpoints (in-process; single worker).
+    rate_limit_enabled: bool = os.getenv("RATE_LIMIT_ENABLED", "true").strip().lower() in ("1", "true", "yes")
 
     # --- Storage ---
     database_path: str = os.getenv("DATABASE_PATH", "hive.db").strip()

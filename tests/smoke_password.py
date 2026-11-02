@@ -22,12 +22,12 @@ async def main():
     await create_all()
     try:
         async with session_scope() as s:
-            m = await accounts.register(s, username="vijay", password="abc123", email=None)
+            m = await accounts.register(s, username="vijay", password="vj-start-42", email=None)
         mid = m.id
 
         # wrong current password -> DomainError (NOT Unauthorized, so no logout)
         async with session_scope() as s:
-            m = await accounts.authenticate(s, "vijay", "abc123")
+            m = await accounts.authenticate(s, "vijay", "vj-start-42")
             try:
                 await accounts.change_password(s, m, "wrongpass", "newpass1")
                 assert False
@@ -37,9 +37,9 @@ async def main():
 
         # too-short new password -> Unprocessable
         async with session_scope() as s:
-            m = await accounts.authenticate(s, "vijay", "abc123")
+            m = await accounts.authenticate(s, "vijay", "vj-start-42")
             try:
-                await accounts.change_password(s, m, "abc123", "123")
+                await accounts.change_password(s, m, "vj-start-42", "123")
                 assert False
             except Unprocessable:
                 pass
@@ -47,9 +47,9 @@ async def main():
 
         # same as current -> DomainError
         async with session_scope() as s:
-            m = await accounts.authenticate(s, "vijay", "abc123")
+            m = await accounts.authenticate(s, "vijay", "vj-start-42")
             try:
-                await accounts.change_password(s, m, "abc123", "abc123")
+                await accounts.change_password(s, m, "vj-start-42", "vj-start-42")
                 assert False
             except DomainError:
                 pass
@@ -57,11 +57,11 @@ async def main():
 
         # happy path: change, then old fails + new works
         async with session_scope() as s:
-            m = await accounts.authenticate(s, "vijay", "abc123")
-            await accounts.change_password(s, m, "abc123", "supersecret9")
+            m = await accounts.authenticate(s, "vijay", "vj-start-42")
+            await accounts.change_password(s, m, "vj-start-42", "supersecret9")
         async with session_scope() as s:
             try:
-                await accounts.authenticate(s, "vijay", "abc123")
+                await accounts.authenticate(s, "vijay", "vj-start-42")
                 assert False
             except Unauthorized:
                 pass

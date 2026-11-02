@@ -37,12 +37,12 @@ async def db_checks():
     await create_all()
 
     async with session_scope() as session:
-        await accounts.register(session, username="amit", password="secret123")
+        await accounts.register(session, username="amit", password="river-stone-77")
     async with session_scope() as session:
         m = await members_repo.get_by_username(session, "amit")
         assert m is not None and m.role == "guest", "new users default to guest"
         assert m.name == "amit" and m.username == "amit"
-        assert m.password_hash and "secret123" not in m.password_hash
+        assert m.password_hash and "river-stone-77" not in m.password_hash
     print("ok registered member is a guest, password stored hashed")
 
     async with engine.connect() as conn:

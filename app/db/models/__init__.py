@@ -18,6 +18,7 @@ from app.db.models.ledger import LedgerEntry, Settlement
 from app.db.models.member import Member
 from app.db.models.member_event import MemberEvent
 from app.db.models.notification import Notification, NotificationOutbox
+from app.db.models.otp import OtpChallenge
 from app.db.models.proposal import (
     ProposalComment,
     ProposalEvent,
@@ -32,6 +33,7 @@ __all__ = [
     "Member",
     "MemberEvent",
     "Invitation",
+    "OtpChallenge",
     "Rule",
     "RuleVersion",
     "Fine",
