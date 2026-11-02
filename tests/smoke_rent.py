@@ -15,9 +15,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ["DATABASE_PATH"] = os.path.join(tempfile.gettempdir(), f"hive_rent_{uuid.uuid4().hex}.db")
 os.environ["MONTHLY_RENT"] = "58000"
 
-from app.core.errors import DomainError  # noqa: E402
+from app.core.errors import DomainError, Unprocessable  # noqa: E402
 from app.db.session import create_all, dispose, session_scope  # noqa: E402
 from app.domain.settle import simplify  # noqa: E402
+from app.domain.time import add_months, latest_local_month  # noqa: E402
 from app.repositories import expenses as expenses_repo  # noqa: E402
 from app.repositories import members as members_repo  # noqa: E402
 from app.services import balances, members as members_svc, rent  # noqa: E402
@@ -98,6 +99,27 @@ async def main():
             st_aug = await rent.rent_status(s, "2026-08")
         assert st_aug["collected"] == 0 and st_aug["remaining"] == 58000
         print("ok rent: months are independent")
+
+        # --- which month: a past month can be cleared, one month ahead is allowed ---
+        async with session_scope() as s:
+            await rent.record_rent_payment(s, actor=a, member_id=a.id, amount=20000, month="2026-08")
+        async with session_scope() as s:
+            r = await rent.record_rent_payment(s, actor=b, member_id=b.id, amount=38000, month="2026-08")
+        assert r["complete"] and r["remaining"] == 0
+        print("ok rent: a past month's remainder can be paid off in full")
+
+        nxt = add_months(latest_local_month(), 1)
+        async with session_scope() as s:
+            r = await rent.record_rent_payment(s, actor=a, member_id=a.id, amount=1000, month=nxt)
+        assert r["collected"] == 1000
+        for bad in (add_months(nxt, 1), "2026-13", "26-07x"):
+            async with session_scope() as s:
+                try:
+                    await rent.record_rent_payment(s, actor=a, member_id=a.id, amount=1, month=bad)
+                    assert False, bad
+                except Unprocessable:
+                    pass
+        print("ok rent: next month accepted; further ahead / malformed months rejected")
 
         print("\nRENT SMOKE: ALL CHECKS PASSED")
     finally:

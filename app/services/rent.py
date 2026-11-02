@@ -8,10 +8,13 @@ number ("send ₹X to Y and everyone's square").
 
 The monthly progress bar (`rent_status`) still shows target vs. what's been fronted; a
 month's fronted total must never exceed the ₹58,000 target (over-payment is rejected
-with the exact rupee delta). Rent may be fronted in several entries by different tenants.
+with the exact rupee delta). Rent may be fronted in several entries by different tenants,
+for the current month, a past month (clearing what's left of it), or one month ahead.
 """
 
 from __future__ import annotations
+
+import re
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,9 +22,22 @@ from app.core.config import settings
 from app.core.errors import DomainError, Unprocessable
 from app.domain.enums import ExpenseCategory, SplitStrategy
 from app.domain.money import rent_ratio_weights, split_by_ratio
+from app.domain.time import add_months, latest_local_month
 from app.repositories import expenses as expenses_repo
 from app.repositories import members as members_repo
 from app.services import expenses as expenses_svc
+
+
+_MONTH = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
+
+def check_month(month: str) -> None:
+    """A real 'YYYY-MM'. Any past month is fine; the furthest ahead is next month."""
+    if not _MONTH.match(month):
+        raise Unprocessable("Month must look like YYYY-MM.")
+    latest = add_months(latest_local_month(), 1)
+    if month > latest:
+        raise Unprocessable(f"Rent can be paid at most one month ahead (up to {latest}).")
 
 
 def _targets(tenants) -> list[int]:
@@ -31,6 +47,7 @@ def _targets(tenants) -> list[int]:
 
 
 async def rent_status(session: AsyncSession, month: str) -> dict:
+    check_month(month)
     target = settings.monthly_rent
     tenants = await members_repo.list_active_tenants(session)
     paid_map = await expenses_repo.rent_by_member(session, month)
@@ -53,6 +70,7 @@ async def record_rent_payment(session: AsyncSession, *, actor, member_id: int, a
     """One tenant fronts `amount` of the month's rent. Recorded as a shared rent expense
     (split by rent-share %), so the fronter is credited and the others owe their slice —
     it settles through the same peer graph as every other expense."""
+    check_month(month)
     if amount <= 0:
         raise Unprocessable("Amount must be positive.")
     target = settings.monthly_rent

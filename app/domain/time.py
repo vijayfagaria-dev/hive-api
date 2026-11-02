@@ -40,3 +40,17 @@ def parse_iso(value: str) -> datetime:
 def seconds_until(value: str, base: datetime) -> int:
     """Whole seconds from `base` until the ISO timestamp `value` (0 if already past)."""
     return max(0, int((parse_iso(value) - base).total_seconds()))
+
+
+def add_months(month: str, n: int) -> str:
+    """'YYYY-MM' shifted by n months (n may be negative)."""
+    y, m = int(month[:4]), int(month[5:7])
+    total = y * 12 + (m - 1) + n
+    return f"{total // 12:04d}-{total % 12 + 1:02d}"
+
+
+def latest_local_month() -> str:
+    """The furthest-ahead calendar month anywhere right now (UTC+14). Used as a lenient
+    'current month' bound so a user just past midnight on the 1st is never told their
+    month hasn't started yet."""
+    return (now() + timedelta(hours=14)).strftime("%Y-%m")
