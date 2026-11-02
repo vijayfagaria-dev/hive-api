@@ -52,8 +52,10 @@ def getting_here_links(settings) -> Optional[dict]:
         uber["dropoff[formatted_address]"] = address
     ola = {"drop_lat": lat, "drop_lng": lng, "utm_source": "hive"}
     # Rapido publishes no booking API or documented deep link (unlike Uber/Ola), so this
-    # Android intent just opens the app if installed, else the website. The drop params
-    # are best-effort and may be ignored — the card asks guests to paste the copied address.
+    # Android intent just opens the app if installed, else Rapido's mobile booking site.
+    # iOS can't open intent:// URLs at all, so the card uses `rapidoWeb` there. The drop
+    # params are best-effort and may be ignored — the card copies the address to paste.
+    rapido_web = "https://m.rapido.bike/"
     rapido_q = urlencode(
         {"destinationLat": lat, "destinationLng": lng, "destinationAddress": place},
         quote_via=quote,
@@ -61,7 +63,7 @@ def getting_here_links(settings) -> Optional[dict]:
     rapido = (
         f"intent://book?{rapido_q}"
         "#Intent;scheme=rapido;package=com.rapido.passenger;"
-        f"S.browser_fallback_url={quote('https://www.rapido.bike/', safe='')};end"
+        f"S.browser_fallback_url={quote(rapido_web, safe='')};end"
     )
 
     return {
@@ -73,4 +75,5 @@ def getting_here_links(settings) -> Optional[dict]:
         "uber": "https://m.uber.com/ul/?" + urlencode(uber),
         "ola": "https://book.olacabs.com/?" + urlencode(ola),
         "rapido": rapido,
+        "rapidoWeb": rapido_web,
     }

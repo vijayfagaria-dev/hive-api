@@ -41,6 +41,7 @@ def unit_checks():
     # Rapido: Android intent URL — opens the app with the drop pre-filled, else web fallback.
     assert "scheme=rapido" in full["rapido"] and "destinationLat=12.9716" in full["rapido"]
     assert "browser_fallback_url=" in full["rapido"] and "rapido.bike" in full["rapido"]
+    assert full["rapidoWeb"] == "https://m.rapido.bike/"  # iOS can't open intent:// links
     print("ok full coords -> directions + geo + uber + ola + rapido links")
 
     assert getting_here_links(ns(flat_address="221B")) == {"address": "221B"}  # address only
