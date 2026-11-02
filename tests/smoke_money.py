@@ -1,5 +1,5 @@
 """Money-ledger smoke test — rent shares, rent-by-ratio split, ledger charges/credits,
-the 2-month settlement (pot->rent->leftover) + the unpaid-fine penalty, and My Money.
+the 2-month settlement (pot->rent->leftover, no unpaid-fine penalty), and My Money.
 
     .venv/bin/python3 tests/smoke_money.py
 """
@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ["DATABASE_PATH"] = os.path.join(tempfile.gettempdir(), f"hive_money_{uuid.uuid4().hex}.db")
-os.environ["MONTHLY_RENT"] = "200"        # small so leftover/penalty are easy to verify
+os.environ["MONTHLY_RENT"] = "200"        # small so the leftover is easy to verify
 os.environ["PENALTY_RENT_PCT"] = "20"
 os.environ["PENALTY_MONTHS"] = "2"
 
@@ -112,17 +112,15 @@ async def main():
         assert bal["Tarun"] == -11400 and bal["Rohit"] == -16200 and bal["Amit"] == -16200 + 30000
         print("ok ledger: broker split by ratio (debits) + advance credit")
 
-        # --- settlement: pot -> rent -> leftover by ratio, + penalty for a defaulter ---
+        # --- settlement: pot -> rent -> leftover by ratio; an unpaid fine is NOT penalised ---
         await add_fine(rohit.id, 300, paid=True)    # collected into the pot
-        await add_fine(tarun.id, 500, paid=False)   # unpaid -> default -> penalty
+        await add_fine(tarun.id, 500, paid=False)   # unpaid -> just stays owed
         async with session_scope() as s:
             pv = await settlements.preview(s)
         assert pv["pot"] == 300 and pv["appliedToRent"] == 200 and pv["leftover"] == 100
         assert sum(p["amount"] for p in pv["payouts"]) == 100                 # leftover fully distributed
-        pen = pv["penalties"][0]
-        assert pen["defaulterName"] == "Tarun" and pen["amount"] == 80        # 20% of 200 * 2
-        assert sum(c["amount"] for c in pen["credits"]) == 80                 # redistributed to the others
-        print("ok settlement preview: pot 300 -> rent 200, leftover 100 by ratio; Tarun penalty 80")
+        assert "penalties" not in pv
+        print("ok settlement preview: pot 300 -> rent 200, leftover 100 by ratio; no penalty")
 
         async with session_scope() as s:
             res = await settlements.close(s, actor=amit, note="period 1")
@@ -130,10 +128,10 @@ async def main():
         async with session_scope() as s:
             tarun_bal_after = await ledger_repo.balance(s, tarun.id)
             setts = await ledger_repo.list_settlements(s)
-        # Tarun: broker -11400, payout +19, penalty -80  => -11461
-        assert tarun_bal_after == -11400 + 19 - 80
+        # Tarun: broker -11400, payout +19 (no penalty)  => -11381
+        assert tarun_bal_after == -11400 + 19
         assert len(setts) == 1 and setts[0].pot_collected == 300 and setts[0].leftover == 100
-        print("ok settlement close: persisted + ledger entries (Tarun -11461)")
+        print("ok settlement close: persisted + ledger entries (Tarun -11381)")
 
         # closing again with nothing new -> rejected
         async with session_scope() as s:
@@ -151,14 +149,14 @@ async def main():
             stmt = await money.statement(s, tarun_live)
             board = await money.all_balances(s)
         assert stmt["finesOwed"] == 500
-        assert stmt["ledgerBalance"] == -11461
+        assert stmt["ledgerBalance"] == -11381
         assert "billsOwed" not in stmt and "bills" not in stmt  # bills off the money net
-        assert stmt["net"] == -11461 - 500 and stmt["owes"] == 11961
+        assert stmt["net"] == -11381 - 500 and stmt["owes"] == 11881
         # /money and the admin /balances board agree — one authority, no divergence.
         tarun_row = next(b for b in board if b["memberId"] == tarun.id)
         assert tarun_row["net"] == stmt["net"]
         assert tarun_row["rentSharePct"] == stmt["rentSharePct"]  # the rent-shares editor reads it
-        print("ok My Money: net from the single authority; /money == /balances (Tarun owes ₹11,961)")
+        print("ok My Money: net from the single authority; /money == /balances (Tarun owes ₹11,881)")
 
         print("\nMONEY SMOKE: ALL CHECKS PASSED")
     finally:

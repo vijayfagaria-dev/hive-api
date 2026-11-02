@@ -9,7 +9,7 @@ advances, deposit, broker, fine-pot payouts, penalties, and manual adjustments.
 
 A `Settlement` is a closed 2-month period: the fine pot is applied toward the
 month's rent and the leftover is paid back by rent ratio (recorded as payout
-entries); unpaid fines in the period trigger penalty entries.
+entries). Historical `penalty` rows (a retired rule) stay valid and keep counting.
 """
 
 from __future__ import annotations

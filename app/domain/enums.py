@@ -152,7 +152,7 @@ class LedgerEntryType(StrEnum):
     ADVANCE = "advance"        # money a member pre-paid (credit)
     DEPOSIT = "deposit"        # security-deposit share (debit) / paid (credit)
     BROKER = "broker"          # one-time broker fee, split by rent ratio
-    PENALTY = "penalty"        # unpaid-fine penalty: debit the defaulter, credit the others
+    PENALTY = "penalty"        # retired unpaid-fine penalty; kept so historical rows stay valid
     PAYOUT = "payout"          # fine-pot leftover returned at a settlement
     ADJUSTMENT = "adjustment"  # manual admin correction
 
