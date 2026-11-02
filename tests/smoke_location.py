@@ -25,7 +25,7 @@ from app.services.location import getting_here_links  # noqa: E402
 
 
 def ns(**kw):
-    base = dict(flat_lat="", flat_lng="", flat_address="", flat_place_name="")
+    base = dict(flat_lat="", flat_lng="", flat_address="", flat_place_name="", flat_unit="")
     base.update(kw)
     return SimpleNamespace(**base)
 
@@ -45,6 +45,10 @@ def unit_checks():
 
     assert getting_here_links(ns(flat_address="221B")) == {"address": "221B"}  # address only
     assert getting_here_links(ns()) is None                                     # nothing set
+    # the unit (flat/block/floor) rides along for display; the copyable address stays clean
+    assert getting_here_links(ns(flat_address="221B", flat_unit="Flat 5")) == {"address": "221B", "unit": "Flat 5"}
+    assert getting_here_links(ns(flat_lat="12.9", flat_lng="77.5", flat_address="221B", flat_unit="Flat 5"))["unit"] == "Flat 5"
+    assert "unit" not in getting_here_links(ns(flat_address="221B"))
     assert getting_here_links(ns(flat_lat="abc", flat_lng="77", flat_address="221B")) == {"address": "221B"}
     # nan / inf / off-globe coords must degrade, never build a broken link.
     assert getting_here_links(ns(flat_lat="nan", flat_lng="77.5", flat_address="221B")) == {"address": "221B"}

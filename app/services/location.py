@@ -18,6 +18,8 @@ def getting_here_links(settings) -> Optional[dict]:
     lng = (settings.flat_lng or "").strip()
     address = (settings.flat_address or "").strip()
     place = (settings.flat_place_name or "").strip() or "Hive"
+    unit = (settings.flat_unit or "").strip()  # flat/block/floor — shown, never copied
+    extra = {"unit": unit} if unit else {}
 
     has_coords = bool(lat and lng)
     if has_coords:
@@ -36,7 +38,7 @@ def getting_here_links(settings) -> Optional[dict]:
                 has_coords = False
 
     if not has_coords:
-        return {"address": address} if address else None
+        return {"address": address, **extra} if address else None
 
     coords = f"{lat},{lng}"  # validated numeric strings — already URL-safe
     uber = {
@@ -49,10 +51,9 @@ def getting_here_links(settings) -> Optional[dict]:
     if address:
         uber["dropoff[formatted_address]"] = address
     ola = {"drop_lat": lat, "drop_lng": lng, "utm_source": "hive"}
-    # Rapido has no public web-booking universal link (unlike Uber/Ola), so use an
-    # Android intent URL: it opens the Rapido app with the drop pre-filled if installed,
-    # else falls back to the web. (iOS Rapido deep-linking is unreliable; iOS just opens
-    # the fallback.) Mirrors Uber/Ola: coordinates + place are passed, not a bare home page.
+    # Rapido publishes no booking API or documented deep link (unlike Uber/Ola), so this
+    # Android intent just opens the app if installed, else the website. The drop params
+    # are best-effort and may be ignored — the card asks guests to paste the copied address.
     rapido_q = urlencode(
         {"destinationLat": lat, "destinationLng": lng, "destinationAddress": place},
         quote_via=quote,
@@ -65,6 +66,7 @@ def getting_here_links(settings) -> Optional[dict]:
 
     return {
         "address": address,
+        **extra,
         "place": place,
         "directions": "https://www.google.com/maps/dir/?api=1&destination=" + coords,
         "geo": f"geo:{coords}?q={coords}({quote(place)})",

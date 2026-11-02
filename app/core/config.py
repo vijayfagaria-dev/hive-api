@@ -130,6 +130,7 @@ class Settings:
     flat_lat: str = os.getenv("FLAT_LAT", "").strip()
     flat_lng: str = os.getenv("FLAT_LNG", "").strip()
     flat_place_name: str = os.getenv("FLAT_PLACE_NAME", "").strip()
+    flat_unit: str = os.getenv("FLAT_UNIT", "").strip()  # e.g. "Flat A-1005 · Block A · 10th floor"
 
     # --- Household invitations ---
     # How long an invite link stays valid, and a per-inviter rolling-24h cap (anti-spam).
