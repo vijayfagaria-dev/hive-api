@@ -1,94 +1,81 @@
-# Hive — API (backend)
+<div align="center">
 
-The backend for **Hive** — a small web app that runs a shared 4–6 person flat: house
-rules, photo-proof **complaints** (accept / deny → flat **vote** → a shared fine "pot"),
-four recurring **bills**, **dues**, a guest experience, NFC spot pages, and notifications.
-A **FastAPI** app serving a JSON API at `/api/*` plus a background sweep that
-auto-confirms overdue complaints and finalizes closed votes — over one SQLite database.
+# Hive API
 
-> **The app is the ledger, the wallet is the jar — they only touch read-only.**
-> It records and calculates; it never holds or moves money.
+**The backend for Hive: an app that runs a shared flat.**
 
-Web-first since v4 (the Telegram bot was retired). The **web frontend is a separate repo**
-→ [vijayfagaria-dev/hive-web](https://github.com/vijayfagaria-dev/hive-web); it consumes
-this JSON API and the dev server proxies `/api` here so auth stays same-origin.
+House rules, fines backed by photo proof, flat votes on disputes, shared expenses,
+rent and settle-up.
 
-## Stack
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy_2.0-async-D71F00?logo=sqlalchemy&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white)
+![Alembic](https://img.shields.io/badge/Alembic-migrations-6BA81E)
 
-FastAPI · **SQLAlchemy 2.0 async ORM** + **Alembic** · SQLite (`sqlite+aiosqlite`) ·
-bcrypt + signed-cookie sessions · Pydantic. Notifications fan out to in-app + Web Push
-(VAPID) + email + WhatsApp (Cloud API).
+[Web app](https://github.com/vijayfagaria-dev/hive-web) · [Features](#features) · [Architecture](#architecture) · [Getting started](#getting-started)
 
-## Architecture (layered)
+</div>
 
+<br>
+
+| Disputed fine under a flat vote | Shared expenses | Rule change proposal |
+|---|---|---|
+| ![Complaint vote](docs/images/complaint-vote.jpg) | ![Expenses](docs/images/expenses.jpg) | ![Rule proposal](docs/images/proposal.jpg) |
+
+## About
+
+Shared flats run on informal agreements: who owes what, whose turn it was, which rule got
+broken. Hive makes those agreements visible and fair. Fines need evidence, disputes are
+settled by the flat, every rupee is accounted for, and the rules change only by vote.
+
+This repository is the API. The web client lives in
+[hive-web](https://github.com/vijayfagaria-dev/hive-web).
+
+## Features
+
+- **Complaints with evidence:** report a rule break with a photo; the accused accepts or
+  disputes, and disputes go to a time-boxed flat vote.
+- **Shared expenses:** six split strategies, rent split by tenant share, recurring expenses
+  and partial payments.
+- **Settle-up:** clears the whole flat in at most *n − 1* transfers, with UPI payment links.
+- **Governance:** propose, discuss and vote on rule changes, merged into a versioned rule
+  book with rollback.
+- **Household management:** tenant and guest roles, invite links and member management.
+- **Notifications:** in-app, Web Push, Firebase, email and WhatsApp.
+- **Accounts:** email-verified sign-up, password reset by one-time code, and session control.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Client[Web app] -->|JSON over HTTPS| API[FastAPI routes]
+    API --> Services[Services]
+    Services --> Repos[Repositories] --> DB[(SQLite)]
+    Sweep[Background sweep] --> Services
+    Services --> Outbox[(Notification outbox)] --> Channels[Push · Email · WhatsApp]
 ```
-app/
-  api/        thin routers (request/response only) + deps (session, auth)
-  schemas/    Pydantic request bodies + response mappers (the wire contract)
-  services/   business logic (complaints, billing, accounts, reporting, notifications)
-  repositories/  ORM queries only — never commit (the session owns the transaction)
-  db/         SQLAlchemy models, async engine/session, seed
-  domain/     enums, time, static content (nfc) — pure, transport-free
-  core/       config, logging, errors (+ handlers), security
-  infra/      proof-image storage
-alembic/      migrations (schema source of truth)
-tests/        standalone smoke suites (no pytest)
-```
 
-Flow: **routes → services → repositories → models**. Adding a feature = add a model + repo
-+ service + schema + route.
+A layered service: thin routes, business rules in services, and queries in repositories,
+with one transaction per request. Time-based work (closing votes, auto-confirming
+complaints, recurring expenses) runs in an in-process sweep, and notifications are
+delivered from an outbox so that slow providers never block a request.
 
-## Run
+## Getting started
+
+Requires Python 3.11+.
 
 ```bash
-python3 -m venv .venv && . .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env                                  # set SECRET_KEY (+ optional VAPID/SMTP/WhatsApp)
-uvicorn app.main:app --reload                         # JSON API on :8000
+git clone https://github.com/vijayfagaria-dev/hive-api.git
+cd hive-api
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/uvicorn app.main:app --reload
 ```
 
-A fresh DB self-provisions (`create_all` + a starter rule set) on first boot. New visitors
-register as a **guest**; promote a real flatmate to **tenant** via the CLI:
+The API runs at `http://localhost:8000`, with interactive docs at `/docs`. A fresh database
+is created and seeded on first start.
 
-```bash
-python -m app.admin list
-python -m app.admin promote <username>                # guest -> tenant
-```
+## Tech stack
 
-Set a random `SECRET_KEY` before exposing logins (sessions are signed with it). Optional:
-`VAPID_*` (Web Push), `SMTP_*` (email), `WHATSAPP_*` (WhatsApp Cloud API),
-`FLAT_*` ("Getting here" card), `WALLET_UPI_QR_URL` (pay screen) — see `.env.example`.
-
-## Deploy
-
-Runs on one small VM: Caddy terminates HTTPS and sends `/api/*` to uvicorn (a single
-worker, so the background sweep runs once) and everything else to the Next.js app.
-`deploy/` has the Caddyfile, both systemd units and the env templates. The SQLite DB and
-proof images live outside the repo, in `/var/lib/hive`.
-
-```bash
-git pull && .venv/bin/pip install -r requirements.txt && .venv/bin/python -m alembic upgrade head
-sudo systemctl restart hive-api
-```
-
-## Migrations (Alembic)
-
-`create_all` provisions fresh/dev DBs; **Alembic is the source of truth for evolving an
-existing DB.**
-
-```bash
-alembic upgrade head                                  # apply migrations
-alembic revision --autogenerate -m "describe change"  # after editing a model
-```
-
-## Tests (no pytest needed)
-
-Standalone smoke suites against throwaway temp DBs — exit non-zero on first failure:
-
-```bash
-.venv/bin/python3 tests/smoke_fines.py      # complaint lifecycle (service + ORM)
-.venv/bin/python3 tests/smoke_auth.py       # bcrypt + accounts + unique-username index
-.venv/bin/python3 tests/smoke_api.py        # the JSON API (auth, role gating, mutations)
-.venv/bin/python3 tests/smoke_location.py   # "Getting here" link builder
-.venv/bin/python3 tests/smoke_web.py        # health + that the bot/webhook is retired
-```
+FastAPI · Pydantic · SQLAlchemy 2.0 (async) · SQLite · Alembic · bcrypt · uvicorn · Caddy ·
+deployed on Oracle Cloud.
