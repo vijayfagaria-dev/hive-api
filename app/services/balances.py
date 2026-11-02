@@ -50,7 +50,10 @@ async def all_balances(session: AsyncSession) -> list[dict]:
     rows = []
     for m in await members_repo.list_active_tenants(session):
         n = await net_for(session, m)
-        rows.append({"memberId": m.id, "name": m.name, "role": m.role, "net": n["net"]})
+        rows.append({
+            "memberId": m.id, "name": m.name, "role": m.role,
+            "rentSharePct": m.rent_share_pct, "net": n["net"],
+        })
     return sorted(rows, key=lambda r: r["net"])
 
 

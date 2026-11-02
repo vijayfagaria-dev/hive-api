@@ -155,7 +155,9 @@ async def main():
         assert "billsOwed" not in stmt and "bills" not in stmt  # bills off the money net
         assert stmt["net"] == -11461 - 500 and stmt["owes"] == 11961
         # /money and the admin /balances board agree — one authority, no divergence.
-        assert next(b for b in board if b["memberId"] == tarun.id)["net"] == stmt["net"]
+        tarun_row = next(b for b in board if b["memberId"] == tarun.id)
+        assert tarun_row["net"] == stmt["net"]
+        assert tarun_row["rentSharePct"] == stmt["rentSharePct"]  # the rent-shares editor reads it
         print("ok My Money: net from the single authority; /money == /balances (Tarun owes ₹11,961)")
 
         print("\nMONEY SMOKE: ALL CHECKS PASSED")
