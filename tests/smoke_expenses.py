@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 os.environ["DATABASE_PATH"] = os.path.join(tempfile.gettempdir(), f"hive_exp_{uuid.uuid4().hex}.db")
 
-from app.core.errors import Unprocessable  # noqa: E402
+from app.core.errors import Forbidden, Unprocessable  # noqa: E402
 from app.db.session import create_all, dispose, session_scope  # noqa: E402
 from app.domain.settle import simplify  # noqa: E402
 from app.repositories import expenses as expenses_repo  # noqa: E402
@@ -167,10 +167,17 @@ async def main():
         assert esplits == {"A": 400, "D": 400}   # re-snapshotted; B & C removed
         # this expense's contribution to D changed from (paid 400 − owed 100)=+300 to (800 − 400)=+400
         assert (await net(d.id))["net"] == d_before - 300 + 400
-        # delete: the expense leaves every balance
+        # delete: only the payer (D) may — A's attempt is refused and changes nothing
         d_pre_del = (await net(d.id))["net"]
         async with session_scope() as s:
-            await expenses.void_expense(s, actor=a, expense_id=eid2)
+            try:
+                await expenses.void_expense(s, actor=a, expense_id=eid2); assert False
+            except Forbidden:
+                pass
+        assert (await net(d.id))["net"] == d_pre_del
+        # the payer deletes it: the expense leaves every balance
+        async with session_scope() as s:
+            await expenses.void_expense(s, actor=d, expense_id=eid2)
         assert (await net(d.id))["net"] == d_pre_del - (800 - 400)   # its +400 contribution removed
         # a deleted expense is out of the feed too (matches balances), but still available
         # for an explicit history view
@@ -180,7 +187,7 @@ async def main():
         assert eid2 not in listed and eid2 in listed_all
         async with session_scope() as s:
             try:
-                await expenses.void_expense(s, actor=a, expense_id=eid2); assert False   # already void
+                await expenses.void_expense(s, actor=d, expense_id=eid2); assert False   # already void
             except Exception:
                 pass
         print("ok edit/delete: re-splits + rebalances; delete voids it out of balances AND the feed")

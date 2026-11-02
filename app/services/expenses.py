@@ -11,7 +11,7 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import Conflict, DomainError, NotFound, Unprocessable
+from app.core.errors import Conflict, DomainError, Forbidden, NotFound, Unprocessable
 from app.db.models import Member
 from app.domain import permissions
 from app.domain.enums import (
@@ -171,11 +171,14 @@ async def record_payment(
 
 
 async def void_expense(session: AsyncSession, *, actor: Member, expense_id: int) -> None:
-    """Soft-delete an expense — it drops out of every balance, its history stays."""
+    """Soft-delete an expense — it drops out of every balance, its history stays.
+    Only the person who paid can delete it."""
     permissions.require(actor, Permission.EDIT_EXPENSE)
     exp = await expenses_repo.get(session, expense_id)
     if exp is None:
         raise NotFound("No such expense.")
+    if exp.payer_id != actor.id:
+        raise Forbidden("Only the person who paid can delete this expense.")
     if exp.status == ExpenseStatus.VOID:
         raise DomainError("That expense is already deleted.")
     exp.status = ExpenseStatus.VOID
