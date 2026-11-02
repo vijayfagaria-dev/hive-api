@@ -13,7 +13,7 @@ rent and settle-up.
 ![SQLite](https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white)
 ![Alembic](https://img.shields.io/badge/Alembic-migrations-6BA81E)
 
-[Web app](https://github.com/vijayfagaria-dev/hive-web) · [Features](#features) · [Architecture](#architecture) · [Getting started](#getting-started)
+**[Live app](https://hive-flat.duckdns.org)** · [Web app](https://github.com/vijayfagaria-dev/hive-web) · [Features](#features) · [Architecture](#architecture) · [Getting started](#getting-started)
 
 </div>
 
